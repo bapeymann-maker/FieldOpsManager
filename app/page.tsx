@@ -1,39 +1,20 @@
 'use client'
 
-import { useState } from 'react'
+import React, { useState, useEffect } from 'react'
+import { getFields, getOperations, getOperationTypes } from '@/lib/data'
 
-const OPERATION_TYPES = [
-  { name: 'Tillage',     color: '#a0522d', bg: '#a0522d20' },
-  { name: 'Planting',    color: '#2d6a2d', bg: '#2d6a2d20' },
-  { name: 'Spraying',    color: '#1a3a6e', bg: '#1a3a6e20' },
-  { name: 'Harvesting',  color: '#b8860b', bg: '#b8860b20' },
-  { name: 'Fertilizing', color: '#c45c00', bg: '#c45c0020' },
-]
-
-// Mock data - will be replaced with Supabase data later
-const MOCK_FIELDS = [
-  'North 80', 'South Quarter', 'River Bottoms', 'East Hillside',
-  'Home Place', 'Gravel Pit', 'County Road', 'Back Forty',
-]
-
-const MOCK_OPERATIONS: Record<string, { type: string; date: string }[]> = {
-  'North 80':      [{ type: 'Tillage', date: '2026-04-01' }, { type: 'Planting', date: '2025-04-15' }],
-  'South Quarter': [{ type: 'Planting', date: '2026-04-10' }, { type: 'Spraying', date: '2025-04-22' }],
-  'River Bottoms': [{ type: 'Fertilizing', date: '2026-04-05' }, { type: 'Planting', date: '2025-04-18' }],
-  'East Hillside': [{ type: 'Tillage', date: '2026-04-03' }],
-  'Home Place':    [{ type: 'Harvesting', date: '2026-04-28' }],
-  'Gravel Pit':    [{ type: 'Spraying', date: '2026-04-12' }, { type: 'Fertilizing', date: '2025-04-20' }],
-  'County Road':   [{ type: 'Planting', date: '2026-04-14' }],
-  'Back Forty':    [{ type: 'Tillage', date: '2026-04-02' }, { type: 'Planting', date: '2025-04-16' }, { type: 'Spraying', date: '2025-04-25' }],
+type Field = { id: string; name: string; acres: number | null; region: string | null }
+type OperationType = { id: string; name: string; color: string }
+type Operation = {
+  id: string
+  date: string
+  field_id: string
+  fields: { name: string }
+  operation_types: { name: string; color: string }
 }
 
 function getDaysInMonth(year: number, month: number) {
   return new Date(year, month + 1, 0).getDate()
-}
-
-function getDayLabel(year: number, month: number, day: number) {
-  const date = new Date(year, month, day)
-  return { day, weekday: date.toLocaleDateString('en-US', { weekday: 'short' }) }
 }
 
 function isWeekend(year: number, month: number, day: number) {
@@ -45,24 +26,43 @@ export default function Home() {
   const now = new Date()
   const [year, setYear] = useState(now.getFullYear())
   const [month, setMonth] = useState(now.getMonth())
+  const [fields, setFields] = useState<Field[]>([])
+  const [operations, setOperations] = useState<Operation[]>([])
+  const [opTypes, setOpTypes] = useState<OperationType[]>([])
+  const [loading, setLoading] = useState(true)
+
   const today = now.getDate()
   const currentMonth = now.getMonth()
   const currentYear = now.getFullYear()
-
   const daysInMonth = getDaysInMonth(year, month)
   const days = Array.from({ length: daysInMonth }, (_, i) => i + 1)
-
   const monthName = new Date(year, month).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
 
-  function getOperation(field: string, day: number) {
-    const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`
-    const ops = MOCK_OPERATIONS[field] || []
-    return ops.find(op => op.date === dateStr) || null
-  }
+  useEffect(() => {
+    async function loadData() {
+      setLoading(true)
+      try {
+        const startDate = `${year}-${String(month + 1).padStart(2, '0')}-01`
+        const endDate = `${year}-${String(month + 1).padStart(2, '0')}-${String(daysInMonth).padStart(2, '0')}`
+        const [fieldsData, opsData, opTypesData] = await Promise.all([
+          getFields(),
+          getOperations(startDate, endDate),
+          getOperationTypes()
+        ])
+        setFields(fieldsData || [])
+        setOperations(opsData || [])
+        setOpTypes(opTypesData || [])
+      } catch (err) {
+        console.error('Error loading data:', err)
+      }
+      setLoading(false)
+    }
+    loadData()
+  }, [year, month, daysInMonth])
 
-  function getOpStyle(type: string) {
-    const op = OPERATION_TYPES.find(o => o.name === type)
-    return op ? { backgroundColor: op.color, color: '#fff' } : {}
+  function getOperation(fieldId: string, day: number) {
+    const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+    return operations.find(op => op.field_id === fieldId && op.date === dateStr) || null
   }
 
   function prevMonth() {
@@ -77,15 +77,15 @@ export default function Home() {
 
   return (
     <div style={{ minHeight: '100vh', backgroundColor: '#0f1410', color: '#e8ead5', fontFamily: "'Georgia', serif" }}>
-      
+
       {/* Header */}
       <div style={{ borderBottom: '1px solid #2a3020', padding: '24px 32px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <div>
           <div style={{ fontSize: '11px', letterSpacing: '0.2em', color: '#6b7a5a', textTransform: 'uppercase', marginBottom: '4px' }}>Field Operations Manager</div>
           <h1 style={{ fontSize: '28px', fontWeight: 'normal', margin: 0, color: '#c8d4a0' }}>Activity Calendar</h1>
         </div>
-        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-          {OPERATION_TYPES.map(op => (
+        <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+          {opTypes.map(op => (
             <div key={op.name} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', color: '#8a9a6a' }}>
               <div style={{ width: '10px', height: '10px', borderRadius: '2px', backgroundColor: op.color }} />
               {op.name}
@@ -101,73 +101,106 @@ export default function Home() {
         <button onClick={nextMonth} style={{ background: 'none', border: '1px solid #2a3020', color: '#8a9a6a', padding: '6px 14px', cursor: 'pointer', borderRadius: '4px', fontSize: '16px' }}>›</button>
       </div>
 
+      {/* Loading */}
+      {loading && (
+        <div style={{ padding: '40px 32px', color: '#6b7a5a', fontSize: '14px' }}>Loading field data...</div>
+      )}
+
+      {/* Empty state */}
+      {!loading && fields.length === 0 && (
+        <div style={{ padding: '40px 32px', color: '#6b7a5a', fontSize: '14px' }}>
+          No fields found. Add fields in your Supabase database to get started.
+        </div>
+      )}
+
       {/* Table */}
-      <div style={{ padding: '0 32px 32px', overflowX: 'auto' }}>
-        <table style={{ borderCollapse: 'collapse', width: '100%', minWidth: `${daysInMonth * 36 + 160}px` }}>
-          <thead>
-            <tr>
-              <th style={{ width: '150px', padding: '8px 12px', textAlign: 'left', fontSize: '11px', letterSpacing: '0.15em', color: '#6b7a5a', textTransform: 'uppercase', borderBottom: '1px solid #2a3020', position: 'sticky', left: 0, backgroundColor: '#0f1410' }}>
-                Field
-              </th>
-              {days.map(day => {
-                const { weekday } = getDayLabel(year, month, day)
-                const isToday = day === today && month === currentMonth && year === currentYear
-                const weekend = isWeekend(year, month, day)
-                return (
-                  <th key={day} style={{
-                    width: '36px', padding: '4px 2px', textAlign: 'center',
-                    fontSize: '10px', color: weekend ? '#4a5a3a' : '#6b7a5a',
-                    borderBottom: '1px solid #2a3020',
-                    borderLeft: isToday ? '2px solid #c8d4a0' : undefined,
-                    backgroundColor: isToday ? '#1a2016' : undefined,
-                  }}>
-                    <div>{weekday.charAt(0)}</div>
-                    <div style={{ fontSize: '11px', color: isToday ? '#c8d4a0' : undefined, fontWeight: isToday ? 'bold' : 'normal' }}>{day}</div>
-                  </th>
-                )
-              })}
-            </tr>
-          </thead>
-          <tbody>
-            {MOCK_FIELDS.map((field, fi) => (
-              <tr key={field} style={{ backgroundColor: fi % 2 === 0 ? '#111612' : '#0f1410' }}>
-                <td style={{
-                  padding: '6px 12px', fontSize: '13px', color: '#a8b888',
-                  borderBottom: '1px solid #1a2016', whiteSpace: 'nowrap',
-                  position: 'sticky', left: 0, backgroundColor: fi % 2 === 0 ? '#111612' : '#0f1410'
-                }}>
-                  {field}
-                </td>
+      {!loading && fields.length > 0 && (
+        <div style={{ padding: '0 32px 32px', overflowX: 'auto' }}>
+          <table style={{ borderCollapse: 'collapse', width: '100%', minWidth: `${daysInMonth * 36 + 160}px` }}>
+            <thead>
+              <tr>
+                <th style={{ width: '150px', padding: '8px 12px', textAlign: 'left', fontSize: '11px', letterSpacing: '0.15em', color: '#6b7a5a', textTransform: 'uppercase', borderBottom: '1px solid #2a3020', position: 'sticky', left: 0, backgroundColor: '#0f1410' }}>
+                  Field
+                </th>
                 {days.map(day => {
-                  const op = getOperation(field, day)
+                  const weekday = new Date(year, month, day).toLocaleDateString('en-US', { weekday: 'short' }).charAt(0)
                   const isToday = day === today && month === currentMonth && year === currentYear
                   const weekend = isWeekend(year, month, day)
                   return (
-                    <td key={day} style={{
-                      padding: '3px 2px', textAlign: 'center',
-                      borderBottom: '1px solid #1a2016',
-                      borderLeft: isToday ? '2px solid #c8d4a04a' : undefined,
-                      backgroundColor: weekend ? '#0d1009' : undefined,
+                    <th key={day} style={{
+                      width: '36px', padding: '4px 2px', textAlign: 'center',
+                      fontSize: '10px', color: weekend ? '#4a5a3a' : '#6b7a5a',
+                      borderBottom: '1px solid #2a3020',
+                      borderLeft: isToday ? '2px solid #c8d4a0' : undefined,
+                      backgroundColor: isToday ? '#1a2016' : undefined,
                     }}>
-                      {op && (
-                        <div title={op.type} style={{
-                          ...getOpStyle(op.type),
-                          width: '28px', height: '22px', borderRadius: '3px',
-                          margin: '0 auto', fontSize: '8px', display: 'flex',
-                          alignItems: 'center', justifyContent: 'center',
-                          letterSpacing: '0.05em', cursor: 'default'
-                        }}>
-                          {op.type.slice(0, 2).toUpperCase()}
-                        </div>
-                      )}
-                    </td>
+                      <div>{weekday}</div>
+                      <div style={{ fontSize: '11px', color: isToday ? '#c8d4a0' : undefined, fontWeight: isToday ? 'bold' : 'normal' }}>{day}</div>
+                    </th>
                   )
                 })}
               </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+            </thead>
+            <tbody>
+              {['North', 'South'].map(region => (
+                <React.Fragment key={region}>
+                  <tr>
+                    <td colSpan={daysInMonth + 1} style={{
+                      padding: '6px 12px',
+                      fontSize: '10px',
+                      letterSpacing: '0.15em',
+                      textTransform: 'uppercase',
+                      color: '#4a5a3a',
+                      backgroundColor: '#0a0f0b',
+                      borderBottom: '1px solid #2a3020'
+                    }}>
+                      {region}ern Operation
+                    </td>
+                  </tr>
+                  {fields.filter(f => f.region === region).map((field, fi) => (
+                    <tr key={field.id} style={{ backgroundColor: fi % 2 === 0 ? '#111612' : '#0f1410' }}>
+                      <td style={{
+                        padding: '6px 12px', fontSize: '13px', color: '#a8b888',
+                        borderBottom: '1px solid #1a2016', whiteSpace: 'nowrap',
+                        position: 'sticky', left: 0, backgroundColor: fi % 2 === 0 ? '#111612' : '#0f1410'
+                      }}>
+                        {field.name}
+                        {field.acres && <span style={{ fontSize: '10px', color: '#4a5a3a', marginLeft: '6px' }}>{field.acres}ac</span>}
+                      </td>
+                      {days.map(day => {
+                        const op = getOperation(field.id, day)
+                        const isToday = day === today && month === currentMonth && year === currentYear
+                        const weekend = isWeekend(year, month, day)
+                        return (
+                          <td key={day} style={{
+                            padding: '3px 2px', textAlign: 'center',
+                            borderBottom: '1px solid #1a2016',
+                            borderLeft: isToday ? '2px solid #c8d4a04a' : undefined,
+                            backgroundColor: weekend ? '#0d1009' : undefined,
+                          }}>
+                            {op && (
+                              <div title={op.operation_types?.name} style={{
+                                backgroundColor: op.operation_types?.color || '#666',
+                                color: '#fff',
+                                width: '28px', height: '22px', borderRadius: '3px',
+                                margin: '0 auto', fontSize: '8px', display: 'flex',
+                                alignItems: 'center', justifyContent: 'center',
+                                letterSpacing: '0.05em', cursor: 'default'
+                              }}>
+                                {op.operation_types?.name?.slice(0, 2).toUpperCase()}
+                              </div>
+                            )}
+                          </td>
+                        )
+                      })}
+                    </tr>
+                  ))}
+                </React.Fragment>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   )
 }
