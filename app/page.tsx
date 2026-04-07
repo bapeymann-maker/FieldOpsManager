@@ -1,9 +1,12 @@
 'use client'
 
 import React, { useState, useEffect } from 'react'
+import dynamic from 'next/dynamic'
 import { getFields, getOperations, getOperationTypes } from '@/lib/data'
 
-type Field = { id: string; name: string; acres: number | null; region: string | null }
+const FieldMap = dynamic(() => import('@/components/FieldMap'), { ssr: false })
+
+type Field = { id: string; name: string; acres: number | null; region: string | null; boundary: object | null }
 type OperationType = { id: string; name: string; color: string }
 type Operation = {
   id: string
@@ -22,6 +25,12 @@ function isWeekend(year: number, month: number, day: number) {
   return d === 0 || d === 6
 }
 
+function daysSince(dateStr: string): number {
+  const then = new Date(dateStr)
+  const now = new Date()
+  return Math.floor((now.getTime() - then.getTime()) / (1000 * 60 * 60 * 24))
+}
+
 export default function Home() {
   const now = new Date()
   const [year, setYear] = useState(now.getFullYear())
@@ -30,6 +39,7 @@ export default function Home() {
   const [operations, setOperations] = useState<Operation[]>([])
   const [opTypes, setOpTypes] = useState<OperationType[]>([])
   const [loading, setLoading] = useState(true)
+  const [view, setView] = useState<'calendar' | 'map'>('calendar')
 
   const today = now.getDate()
   const currentMonth = now.getMonth()
@@ -75,6 +85,13 @@ export default function Home() {
     else setMonth(m => m + 1)
   }
 
+  // Build fields with daysSinceWork for map heat
+  const fieldsWithHeat = fields.map(f => {
+    const fieldOps = operations.filter(op => op.field_id === f.id)
+    const latest = fieldOps.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())[0]
+    return { ...f, daysSinceWork: latest ? daysSince(latest.date) : undefined }
+  })
+
   return (
     <div style={{ minHeight: '100vh', backgroundColor: '#0f1410', color: '#e8ead5', fontFamily: "'Georgia', serif" }}>
 
@@ -84,13 +101,28 @@ export default function Home() {
           <div style={{ fontSize: '11px', letterSpacing: '0.2em', color: '#6b7a5a', textTransform: 'uppercase', marginBottom: '4px' }}>Field Operations Manager</div>
           <h1 style={{ fontSize: '28px', fontWeight: 'normal', margin: 0, color: '#c8d4a0' }}>Activity Calendar</h1>
         </div>
-        <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-          {opTypes.map(op => (
-            <div key={op.name} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', color: '#8a9a6a' }}>
-              <div style={{ width: '10px', height: '10px', borderRadius: '2px', backgroundColor: op.color }} />
-              {op.name}
-            </div>
-          ))}
+        <div style={{ display: 'flex', gap: '16px', alignItems: 'center' }}>
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+            {opTypes.map(op => (
+              <div key={op.name} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', color: '#8a9a6a' }}>
+                <div style={{ width: '10px', height: '10px', borderRadius: '2px', backgroundColor: op.color }} />
+                {op.name}
+              </div>
+            ))}
+          </div>
+          {/* View Toggle */}
+          <div style={{ display: 'flex', border: '1px solid #2a3020', borderRadius: '4px', overflow: 'hidden' }}>
+            <button onClick={() => setView('calendar')} style={{
+              padding: '6px 16px', cursor: 'pointer', fontSize: '12px', border: 'none',
+              backgroundColor: view === 'calendar' ? '#2a3020' : 'transparent',
+              color: view === 'calendar' ? '#c8d4a0' : '#6b7a5a'
+            }}>Calendar</button>
+            <button onClick={() => setView('map')} style={{
+              padding: '6px 16px', cursor: 'pointer', fontSize: '12px', border: 'none',
+              backgroundColor: view === 'map' ? '#2a3020' : 'transparent',
+              color: view === 'map' ? '#c8d4a0' : '#6b7a5a'
+            }}>Heat Map</button>
+          </div>
         </div>
       </div>
 
@@ -106,15 +138,36 @@ export default function Home() {
         <div style={{ padding: '40px 32px', color: '#6b7a5a', fontSize: '14px' }}>Loading field data...</div>
       )}
 
-      {/* Empty state */}
-      {!loading && fields.length === 0 && (
+      {/* Map View */}
+      {!loading && view === 'map' && (
+        <div style={{ padding: '0 32px 32px' }}>
+          <div style={{ marginBottom: '16px', display: 'flex', gap: '16px', alignItems: 'center' }}>
+            {[
+              { label: 'Today', color: '#ff2200' },
+              { label: 'This week', color: '#ff6600' },
+              { label: '2 weeks', color: '#ffaa00' },
+              { label: '1 month', color: '#88cc00' },
+              { label: '2 months', color: '#226622' },
+              { label: 'Not worked', color: '#2a3020' },
+            ].map(item => (
+              <div key={item.label} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', color: '#8a9a6a' }}>
+                <div style={{ width: '12px', height: '12px', borderRadius: '2px', backgroundColor: item.color }} />
+                {item.label}
+              </div>
+            ))}
+          </div>
+          <FieldMap fields={fieldsWithHeat} />
+        </div>
+      )}
+
+      {/* Calendar View */}
+      {!loading && view === 'calendar' && fields.length === 0 && (
         <div style={{ padding: '40px 32px', color: '#6b7a5a', fontSize: '14px' }}>
           No fields found. Add fields in your Supabase database to get started.
         </div>
       )}
 
-      {/* Table */}
-      {!loading && fields.length > 0 && (
+      {!loading && view === 'calendar' && fields.length > 0 && (
         <div style={{ padding: '0 32px 32px', overflowX: 'auto' }}>
           <table style={{ borderCollapse: 'collapse', width: '100%', minWidth: `${daysInMonth * 36 + 160}px` }}>
             <thead>
