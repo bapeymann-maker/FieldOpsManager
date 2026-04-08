@@ -15,16 +15,13 @@ function mapOperationType(op: {
   products?: { productType: string }[]
 }): string {
   const type = op.fieldOperationType
-
   if (type === 'seeding') return 'Seeding'
   if (type === 'harvest') return 'Harvest'
-
   if (type === 'application') {
     const productType = op.products?.[0]?.productType
     if (productType === 'FERTILIZER') return 'Application - Fertilizer'
     return 'Application - Chemical'
   }
-
   if (type === 'tillage') {
     const tillageType = op.tillageProducts?.[0]?.tillageType?.toLowerCase() || ''
     if (tillageType.includes('row crop') || tillageType.includes('row cultivat')) return 'Tillage - Row Cultivator'
@@ -32,22 +29,14 @@ function mapOperationType(op: {
     if (tillageType.includes('shank')) return 'Tillage - Shank'
     if (tillageType.includes('secondary')) return 'Tillage - Secondary'
     if (tillageType.includes('field cultiv')) return 'Tillage - Field Cultivator'
-    if (tillageType.includes('rotary')) return 'Tillage - Rotary Hoe'
-    if (tillageType.includes('tine')) return 'Tillage - Tine Weeder'
     return 'Tillage - Field Cultivator'
   }
-
-  return 'Spraying'
+  return 'Application - Chemical'
 }
 
 async function getAccessToken() {
-  const { data } = await supabase
-    .from('jd_tokens')
-    .select('*')
-    .eq('id', 1)
-    .single()
+  const { data } = await supabase.from('jd_tokens').select('*').eq('id', 1).single()
   if (!data) throw new Error('No token found')
-
   if (new Date(data.expires_at) < new Date()) {
     const response = await fetch('https://signin.johndeere.com/oauth2/aus78tnlaysMraFhC1t7/v1/token', {
       method: 'POST',
@@ -73,89 +62,92 @@ async function getAccessToken() {
   return data.access_token
 }
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
+    const { searchParams } = new URL(request.url)
+    const forceFullSync = searchParams.get('full') === 'true'
+
     const token = await getAccessToken()
     const headers = {
       'Authorization': `Bearer ${token}`,
       'Accept': 'application/vnd.deere.axiom.v3+json'
     }
 
-    // Get all operation types from Supabase
+    const { data: syncData } = await supabase.from('sync_log').select('last_synced_at').eq('id', 1).single()
+    const lastSyncedAt = forceFullSync ? '2020-01-01T00:00:00Z' : (syncData?.last_synced_at || '2020-01-01T00:00:00Z')
+    const syncStartTime = new Date().toISOString()
+
     const { data: opTypes } = await supabase.from('operation_types').select('*')
     const opTypeMap = Object.fromEntries((opTypes || []).map(ot => [ot.name, ot.id]))
 
-    // Get all fields from Supabase
     const { data: dbFields } = await supabase.from('fields').select('id, name')
     const fieldMap = Object.fromEntries((dbFields || []).map(f => [f.name.toLowerCase().trim(), f.id]))
 
-    // Get all JD fields with pagination
-    let allJDFields: {id: string, name: string}[] = []
-    let nextUrl = `${JD_BASE}/organizations/${ORG_ID}/fields?itemLimit=100`
-
-    while (nextUrl) {
-      const res = await fetch(nextUrl, { headers })
+    // Get all JD fields
+    let allJDFields: { id: string, name: string }[] = []
+    let fieldsUrl = `${JD_BASE}/organizations/${ORG_ID}/fields?itemLimit=100`
+    while (fieldsUrl) {
+      const res = await fetch(fieldsUrl, { headers })
       const data = await res.json()
       allJDFields = allJDFields.concat(data.values || [])
-      const nextLink = data.links?.find((l: {rel: string, uri: string}) => l.rel === 'nextPage')
-      nextUrl = nextLink?.uri || ''
+      const nextLink = data.links?.find((l: { rel: string, uri: string }) => l.rel === 'nextPage')
+      fieldsUrl = nextLink?.uri || ''
     }
+
+    // Only process fields that exist in our DB
+    const matchedFields = allJDFields.filter(f => fieldMap[f.name?.toLowerCase().trim()])
 
     let synced = 0
     let skipped = 0
-    let notMatched = 0
-    const notMatchedFields: string[] = []
 
-    // For each JD field, get operations
-    for (const jdField of allJDFields) {
-      const fieldName = jdField.name?.toLowerCase().trim()
-      const fieldId = fieldMap[fieldName]
+    // Process fields in parallel batches of 20
+    const BATCH_SIZE = 20
+    for (let i = 0; i < matchedFields.length; i += BATCH_SIZE) {
+      const batch = matchedFields.slice(i, i + BATCH_SIZE)
 
-      if (!fieldId) {
-        notMatched++
-        notMatchedFields.push(jdField.name)
-        continue
-      }
+      await Promise.all(batch.map(async (jdField) => {
+        const fieldId = fieldMap[jdField.name?.toLowerCase().trim()]
 
-      // Get all operations for this field
-      let opsUrl = `${JD_BASE}/organizations/${ORG_ID}/fields/${jdField.id}/fieldOperations?itemLimit=100`
+        let opsUrl = `${JD_BASE}/organizations/${ORG_ID}/fields/${jdField.id}/fieldOperations?itemLimit=100&modifiedSince=${encodeURIComponent(lastSyncedAt)}`
 
-      while (opsUrl) {
-        const opsRes = await fetch(opsUrl, { headers })
-        const opsData = await opsRes.json()
+        while (opsUrl) {
+          const opsRes = await fetch(opsUrl, { headers })
+          const opsData = await opsRes.json()
 
-        for (const op of opsData.values || []) {
-          const opTypeName = mapOperationType(op)
-          const opTypeId = opTypeMap[opTypeName]
-          const date = op.startDate ? op.startDate.split('T')[0] : null
+          for (const op of opsData.values || []) {
+            const opTypeName = mapOperationType(op)
+            const opTypeId = opTypeMap[opTypeName]
+            const date = op.startDate ? op.startDate.split('T')[0] : null
+            if (!opTypeId || !date) { skipped++; return }
 
-          if (!opTypeId || !date) { skipped++; continue }
+            const { error } = await supabase.from('operations').upsert({
+              field_id: fieldId,
+              operation_type_id: opTypeId,
+              date,
+              notes: op.tillageProducts?.[0]?.tillageType || op.cropName || '',
+              source: 'john_deere',
+              jd_operation_id: op.id
+            }, { onConflict: 'jd_operation_id' })
 
-          // Upsert to avoid duplicates
-          const { error } = await supabase.from('operations').upsert({
-            field_id: fieldId,
-            operation_type_id: opTypeId,
-            date,
-            notes: op.tillageProducts?.[0]?.tillageType || op.cropName || '',
-            source: 'john_deere',
-            jd_operation_id: op.id
-          }, { onConflict: 'jd_operation_id' })
+            if (!error) synced++
+            else skipped++
+          }
 
-          if (!error) synced++
-          else skipped++
+          const nextLink = opsData.links?.find((l: { rel: string, uri: string }) => l.rel === 'nextPage')
+          opsUrl = nextLink?.uri || ''
         }
-
-        const nextLink = opsData.links?.find((l: {rel: string, uri: string}) => l.rel === 'nextPage')
-        opsUrl = nextLink?.uri || ''
-      }
+      }))
     }
+
+    await supabase.from('sync_log').update({ last_synced_at: syncStartTime }).eq('id', 1)
 
     return NextResponse.json({
       success: true,
       synced,
       skipped,
-      notMatched,
-      notMatchedFields: notMatchedFields.slice(0, 20)
+      lastSyncedAt,
+      syncStartTime,
+      incremental: !forceFullSync
     })
 
   } catch (err) {
