@@ -2,10 +2,17 @@
 
 import React, { useState, useEffect } from 'react'
 import dynamic from 'next/dynamic'
+import { createBrowserClient } from '@supabase/ssr'
+import { useRouter } from 'next/navigation'
 import { getFields, getOperations, getOperationTypes } from '@/lib/data'
 import AddOperationModal from '@/components/AddOperationModal'
 
 const FieldMap = dynamic(() => import('@/components/FieldMap'), { ssr: false })
+
+const supabase = createBrowserClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+)
 
 type Field = { id: string; name: string; acres: number | null; region: string | null; boundary: object | null }
 type OperationType = { id: string; name: string; color: string }
@@ -34,6 +41,7 @@ function daysSince(dateStr: string): number {
 
 export default function Home() {
   const now = new Date()
+  const router = useRouter()
   const [year, setYear] = useState(now.getFullYear())
   const [month, setMonth] = useState(now.getMonth())
   const [fields, setFields] = useState<Field[]>([])
@@ -73,6 +81,12 @@ export default function Home() {
     loadData()
   }, [year, month, daysInMonth])
 
+  async function handleSignOut() {
+    await supabase.auth.signOut()
+    router.push('/login')
+    router.refresh()
+  }
+
   function getOperation(fieldId: string, day: number) {
     const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`
     return operations.find(op => op.field_id === fieldId && op.date === dateStr) || null
@@ -98,10 +112,10 @@ export default function Home() {
     <div style={{ minHeight: '100vh', backgroundColor: '#0f1410', color: '#e8ead5', fontFamily: "'Georgia', serif" }}>
 
       {/* Header */}
-      <div style={{ borderBottom: '1px solid #2a3020', padding: '24px 32px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+      <div style={{ borderBottom: '1px solid #2a3020', padding: '16px 32px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <div>
           <div style={{ fontSize: '11px', letterSpacing: '0.2em', color: '#6b7a5a', textTransform: 'uppercase', marginBottom: '4px' }}>Field Operations Manager</div>
-          <h1 style={{ fontSize: '28px', fontWeight: 'normal', margin: 0, color: '#c8d4a0' }}>Activity Calendar</h1>
+          <h1 style={{ fontSize: '24px', fontWeight: 'normal', margin: 0, color: '#c8d4a0' }}>Activity Calendar</h1>
         </div>
         <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
           <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
@@ -132,6 +146,13 @@ export default function Home() {
             letterSpacing: '0.05em'
           }}>
             + Log Operation
+          </button>
+          {/* Sign Out */}
+          <button onClick={handleSignOut} style={{
+            padding: '6px 14px', background: 'none', border: '1px solid #2a3020',
+            color: '#6b7a5a', borderRadius: '4px', cursor: 'pointer', fontSize: '12px'
+          }}>
+            Sign Out
           </button>
         </div>
       </div>
