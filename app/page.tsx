@@ -81,13 +81,11 @@ export default function Home() {
         getFields(),
         getOperationTypes()
       ])
-
       const { data: opsData } = await supabaseClient
         .from('operations')
         .select('*, fields(name), operation_types(name, color)')
         .gte('date', startDate)
         .lte('date', endDate)
-
       setFields(fieldsData || [])
       setOperations(opsData || [])
       setOpTypes(opTypesData || [])
@@ -104,13 +102,11 @@ export default function Home() {
         getFields(),
         getOperationTypes()
       ])
-
       const { data: opsData } = await supabaseClient
         .from('operations')
         .select('*, fields(name), operation_types(name, color)')
         .gte('date', `${year}-01-01`)
         .lte('date', `${year}-12-31`)
-
       setFields(fieldsData || [])
       setAllYearOps(opsData || [])
       setOpTypes(opTypesData || [])
@@ -121,18 +117,58 @@ export default function Home() {
   }
 
   useEffect(() => {
-    if (view === 'year') {
-      loadYearData()
-    } else {
-      loadData()
-    }
+    if (view === 'year') loadYearData()
+    else loadData()
   }, [year, month, view])
+
+  // Calculate acres summary
+  const activeOps = view === 'year' ? allYearOps : operations
+  const acresSummary = opTypes.map(ot => {
+    const opsOfType = activeOps.filter(op => op.operation_type_id === ot.id)
+    const uniqueFieldIds = [...new Set(opsOfType.map(op => op.field_id))]
+    const totalAcres = uniqueFieldIds.reduce((sum, fid) => {
+      const field = fields.find(f => f.id === fid)
+      return sum + (field?.acres || 0)
+    }, 0)
+    return { ...ot, totalAcres, count: opsOfType.length }
+  }).filter(s => s.count > 0)
+
+  const totalAcresWorked = acresSummary.reduce((sum, s) => sum + s.totalAcres, 0)
 
   async function handleSignOut() {
     await supabase.auth.signOut()
     router.push('/login')
     router.refresh()
   }
+
+  function exportToCSV() {
+  const activeOps = view === 'year' ? allYearOps : operations
+  if (activeOps.length === 0) return
+
+  const rows = activeOps.map(op => {
+    const field = fields.find(f => f.id === op.field_id)
+    return [
+      new Date(op.date + 'T12:00:00').toLocaleDateString('en-US'),
+      field?.name || '',
+      field?.region || '',
+      field?.acres || '',
+      op.operation_types?.name || '',
+      op.notes || '',
+      op.source || 'manual'
+    ]
+  })
+
+  const headers = ['Date', 'Field', 'Region', 'Acres', 'Operation Type', 'Notes', 'Source']
+  const csv = [headers, ...rows].map(r => r.map(v => `"${v}"`).join(',')).join('\n')
+
+  const blob = new Blob([csv], { type: 'text/csv' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `field-ops-${view === 'year' ? year : `${year}-${String(month + 1).padStart(2, '0')}`}.csv`
+  a.click()
+  URL.revokeObjectURL(url)
+}
 
   async function handleDelete() {
     if (!selectedOp) return
@@ -212,6 +248,10 @@ export default function Home() {
             padding: '6px 16px', backgroundColor: '#2d6a2d', border: 'none',
             color: '#fff', borderRadius: '4px', cursor: 'pointer', fontSize: '12px'
           }}>+ Log Operation</button>
+          <button onClick={exportToCSV} style={{
+            padding: '6px 16px', background: 'none', border: '1px solid #2a3020',
+            color: '#8a9a6a', borderRadius: '4px', cursor: 'pointer', fontSize: '12px'
+          }}>↓ Export CSV</button>
           <button onClick={handleSignOut} style={{
             padding: '6px 14px', background: 'none', border: '1px solid #2a3020',
             color: '#6b7a5a', borderRadius: '4px', cursor: 'pointer', fontSize: '12px'
@@ -227,6 +267,31 @@ export default function Home() {
           borderRadius: '4px', fontSize: '12px', textDecoration: 'none'
         }}>Connect John Deere</a>
       </div>
+
+      {/* Stats Bar */}
+      {!loading && acresSummary.length > 0 && (
+        <div style={{ padding: '12px 32px', borderBottom: '1px solid #2a3020', display: 'flex', gap: '24px', alignItems: 'center', flexWrap: 'wrap', backgroundColor: '#0c1410' }}>
+          <div style={{ fontSize: '11px', letterSpacing: '0.15em', textTransform: 'uppercase', color: '#4a5a3a' }}>
+            {view === 'year' ? `${year} Summary` : monthName}
+          </div>
+          <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap', alignItems: 'center' }}>
+            {acresSummary.map(s => (
+              <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <div style={{ width: '8px', height: '8px', borderRadius: '2px', backgroundColor: s.color }} />
+                <span style={{ fontSize: '12px', color: '#8a9a6a' }}>
+                  {s.name.replace('Tillage - ', '')}:
+                </span>
+                <span style={{ fontSize: '12px', color: '#c8d4a0', fontWeight: 'bold' }}>
+                  {s.totalAcres.toLocaleString('en-US', { maximumFractionDigits: 0 })} ac
+                </span>
+              </div>
+            ))}
+          </div>
+          <div style={{ marginLeft: 'auto', fontSize: '13px', color: '#c8d4a0' }}>
+            Total: <strong>{totalAcresWorked.toLocaleString('en-US', { maximumFractionDigits: 0 })} ac</strong>
+          </div>
+        </div>
+      )}
 
       {/* Year / Month Nav */}
       <div style={{ padding: '16px 32px', display: 'flex', alignItems: 'center', gap: '16px' }}>
