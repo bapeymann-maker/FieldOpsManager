@@ -11,15 +11,27 @@ type Props = {
   opTypes: OperationType[]
   onClose: () => void
   onSaved: () => void
+  editOperation?: {
+    id: string
+    field_id: string
+    operation_type_id: string
+    date: string
+    notes: string
+  }
 }
 
-export default function AddOperationModal({ fields, opTypes, onClose, onSaved }: Props) {
-  const [fieldId, setFieldId] = useState('')
-  const [opTypeId, setOpTypeId] = useState('')
-  const [date, setDate] = useState(new Date().toISOString().split('T')[0])
-  const [notes, setNotes] = useState('')
+export default function AddOperationModal({ fields, opTypes, onClose, onSaved, editOperation }: Props) {
+  const [fieldId, setFieldId] = useState(editOperation?.field_id || '')
+  const [opTypeId, setOpTypeId] = useState(editOperation?.operation_type_id || '')
+  const [date, setDate] = useState(editOperation?.date || new Date().toISOString().split('T')[0])
+  const [notes, setNotes] = useState(editOperation?.notes || '')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+
+  const isEditing = !!editOperation
+
+  const tillageTypes = opTypes.filter(op => op.name.startsWith('Tillage'))
+  const otherTypes = opTypes.filter(op => !op.name.startsWith('Tillage'))
 
   const northFields = fields.filter(f => f.region === 'North')
   const southFields = fields.filter(f => f.region === 'South')
@@ -31,20 +43,28 @@ export default function AddOperationModal({ fields, opTypes, onClose, onSaved }:
     }
     setSaving(true)
     setError('')
-    const { error } = await supabase.from('operations').insert({
-      field_id: fieldId,
-      operation_type_id: opTypeId,
-      date,
-      notes,
-      source: 'manual'
-    })
-    if (error) {
-      setError(error.message)
-      setSaving(false)
+
+    if (isEditing) {
+      const { error } = await supabase.from('operations').update({
+        field_id: fieldId,
+        operation_type_id: opTypeId,
+        date,
+        notes
+      }).eq('id', editOperation.id)
+      if (error) { setError(error.message); setSaving(false); return }
     } else {
-      onSaved()
-      onClose()
+      const { error } = await supabase.from('operations').insert({
+        field_id: fieldId,
+        operation_type_id: opTypeId,
+        date,
+        notes,
+        source: 'manual'
+      })
+      if (error) { setError(error.message); setSaving(false); return }
     }
+
+    onSaved()
+    onClose()
   }
 
   return (
@@ -54,10 +74,11 @@ export default function AddOperationModal({ fields, opTypes, onClose, onSaved }:
     }}>
       <div style={{
         backgroundColor: '#111612', border: '1px solid #2a3020',
-        borderRadius: '8px', padding: '32px', width: '480px', maxWidth: '90vw'
+        borderRadius: '8px', padding: '32px', width: '520px', maxWidth: '90vw',
+        maxHeight: '90vh', overflowY: 'auto'
       }}>
         <h2 style={{ margin: '0 0 24px', fontSize: '20px', fontWeight: 'normal', color: '#c8d4a0', fontFamily: 'Georgia, serif' }}>
-          Log Field Operation
+          {isEditing ? 'Edit Operation' : 'Log Field Operation'}
         </h2>
 
         {/* Field Select */}
@@ -85,17 +106,39 @@ export default function AddOperationModal({ fields, opTypes, onClose, onSaved }:
           <label style={{ display: 'block', fontSize: '11px', letterSpacing: '0.15em', textTransform: 'uppercase', color: '#6b7a5a', marginBottom: '8px' }}>
             Operation Type *
           </label>
-          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-            {opTypes.map(op => (
-              <button key={op.id} onClick={() => setOpTypeId(op.id)} style={{
-                padding: '6px 14px', borderRadius: '4px', cursor: 'pointer', fontSize: '13px',
-                border: opTypeId === op.id ? `2px solid ${op.color}` : '2px solid #2a3020',
-                backgroundColor: opTypeId === op.id ? op.color + '33' : 'transparent',
-                color: opTypeId === op.id ? op.color : '#6b7a5a'
-              }}>
-                {op.name}
-              </button>
-            ))}
+
+          {/* Tillage group */}
+          <div style={{ marginBottom: '8px' }}>
+            <div style={{ fontSize: '10px', color: '#4a5a3a', letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: '6px' }}>Tillage</div>
+            <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+              {tillageTypes.map(op => (
+                <button key={op.id} onClick={() => setOpTypeId(op.id)} style={{
+                  padding: '5px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px',
+                  border: opTypeId === op.id ? `2px solid ${op.color}` : '2px solid #2a3020',
+                  backgroundColor: opTypeId === op.id ? op.color + '33' : 'transparent',
+                  color: opTypeId === op.id ? op.color : '#6b7a5a'
+                }}>
+                  {op.name.replace('Tillage - ', '')}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Other types */}
+          <div>
+            <div style={{ fontSize: '10px', color: '#4a5a3a', letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: '6px' }}>Other</div>
+            <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+              {otherTypes.map(op => (
+                <button key={op.id} onClick={() => setOpTypeId(op.id)} style={{
+                  padding: '5px 12px', borderRadius: '4px', cursor: 'pointer', fontSize: '12px',
+                  border: opTypeId === op.id ? `2px solid ${op.color}` : '2px solid #2a3020',
+                  backgroundColor: opTypeId === op.id ? op.color + '33' : 'transparent',
+                  color: opTypeId === op.id ? op.color : '#6b7a5a'
+                }}>
+                  {op.name}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
 
@@ -134,7 +177,7 @@ export default function AddOperationModal({ fields, opTypes, onClose, onSaved }:
             padding: '8px 20px', backgroundColor: '#2d6a2d', border: 'none',
             color: '#fff', borderRadius: '4px', cursor: 'pointer', fontSize: '14px'
           }}>
-            {saving ? 'Saving...' : 'Log Operation'}
+            {saving ? 'Saving...' : isEditing ? 'Save Changes' : 'Log Operation'}
           </button>
         </div>
       </div>

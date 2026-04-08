@@ -20,8 +20,17 @@ type Operation = {
   id: string
   date: string
   field_id: string
+  operation_type_id: string
+  notes: string
   fields: { name: string }
   operation_types: { name: string; color: string }
+}
+
+type SelectedOp = {
+  op: Operation
+  fieldName: string
+  x: number
+  y: number
 }
 
 function getDaysInMonth(year: number, month: number) {
@@ -50,6 +59,9 @@ export default function Home() {
   const [loading, setLoading] = useState(true)
   const [view, setView] = useState<'calendar' | 'map'>('calendar')
   const [showModal, setShowModal] = useState(false)
+  const [editOp, setEditOp] = useState<Operation | null>(null)
+  const [selectedOp, setSelectedOp] = useState<SelectedOp | null>(null)
+  const [deleting, setDeleting] = useState(false)
 
   const today = now.getDate()
   const currentMonth = now.getMonth()
@@ -87,6 +99,26 @@ export default function Home() {
     router.refresh()
   }
 
+  async function handleDelete() {
+    if (!selectedOp) return
+    setDeleting(true)
+    await supabase.from('operations').delete().eq('id', selectedOp.op.id)
+    setSelectedOp(null)
+    setDeleting(false)
+    loadData()
+  }
+
+  function handleCellClick(op: Operation, fieldName: string, e: React.MouseEvent) {
+    e.stopPropagation()
+    const rect = (e.target as HTMLElement).getBoundingClientRect()
+    setSelectedOp({
+      op,
+      fieldName,
+      x: rect.left + window.scrollX,
+      y: rect.bottom + window.scrollY + 4
+    })
+  }
+
   function getOperation(fieldId: string, day: number) {
     const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`
     return operations.find(op => op.field_id === fieldId && op.date === dateStr) || null
@@ -109,7 +141,8 @@ export default function Home() {
   })
 
   return (
-    <div style={{ minHeight: '100vh', backgroundColor: '#0f1410', color: '#e8ead5', fontFamily: "'Georgia', serif" }}>
+    <div style={{ minHeight: '100vh', backgroundColor: '#0f1410', color: '#e8ead5', fontFamily: "'Georgia', serif" }}
+      onClick={() => setSelectedOp(null)}>
 
       {/* Header */}
       <div style={{ borderBottom: '1px solid #2a3020', padding: '16px 32px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -126,7 +159,6 @@ export default function Home() {
               </div>
             ))}
           </div>
-          {/* View Toggle */}
           <div style={{ display: 'flex', border: '1px solid #2a3020', borderRadius: '4px', overflow: 'hidden' }}>
             <button onClick={() => setView('calendar')} style={{
               padding: '6px 16px', cursor: 'pointer', fontSize: '12px', border: 'none',
@@ -139,21 +171,14 @@ export default function Home() {
               color: view === 'map' ? '#c8d4a0' : '#6b7a5a'
             }}>Heat Map</button>
           </div>
-          {/* Log Operation Button */}
           <button onClick={() => setShowModal(true)} style={{
             padding: '6px 16px', backgroundColor: '#2d6a2d', border: 'none',
-            color: '#fff', borderRadius: '4px', cursor: 'pointer', fontSize: '12px',
-            letterSpacing: '0.05em'
-          }}>
-            + Log Operation
-          </button>
-          {/* Sign Out */}
+            color: '#fff', borderRadius: '4px', cursor: 'pointer', fontSize: '12px'
+          }}>+ Log Operation</button>
           <button onClick={handleSignOut} style={{
             padding: '6px 14px', background: 'none', border: '1px solid #2a3020',
             color: '#6b7a5a', borderRadius: '4px', cursor: 'pointer', fontSize: '12px'
-          }}>
-            Sign Out
-          </button>
+          }}>Sign Out</button>
         </div>
       </div>
 
@@ -163,9 +188,7 @@ export default function Home() {
         <a href="/api/auth/jd" style={{
           padding: '5px 14px', backgroundColor: '#367c2b', color: '#fff',
           borderRadius: '4px', fontSize: '12px', textDecoration: 'none'
-        }}>
-          Connect John Deere
-        </a>
+        }}>Connect John Deere</a>
       </div>
 
       {/* Month Nav */}
@@ -175,10 +198,7 @@ export default function Home() {
         <button onClick={nextMonth} style={{ background: 'none', border: '1px solid #2a3020', color: '#8a9a6a', padding: '6px 14px', cursor: 'pointer', borderRadius: '4px', fontSize: '16px' }}>›</button>
       </div>
 
-      {/* Loading */}
-      {loading && (
-        <div style={{ padding: '40px 32px', color: '#6b7a5a', fontSize: '14px' }}>Loading field data...</div>
-      )}
+      {loading && <div style={{ padding: '40px 32px', color: '#6b7a5a', fontSize: '14px' }}>Loading field data...</div>}
 
       {/* Map View */}
       {!loading && view === 'map' && (
@@ -203,12 +223,6 @@ export default function Home() {
       )}
 
       {/* Calendar View */}
-      {!loading && view === 'calendar' && fields.length === 0 && (
-        <div style={{ padding: '40px 32px', color: '#6b7a5a', fontSize: '14px' }}>
-          No fields found. Add fields in your Supabase database to get started.
-        </div>
-      )}
-
       {!loading && view === 'calendar' && fields.length > 0 && (
         <div style={{ padding: '0 32px 32px', overflowX: 'auto' }}>
           <table style={{ borderCollapse: 'collapse', width: '100%', minWidth: `${daysInMonth * 36 + 160}px` }}>
@@ -241,13 +255,9 @@ export default function Home() {
                 <React.Fragment key={region}>
                   <tr>
                     <td colSpan={daysInMonth + 1} style={{
-                      padding: '6px 12px',
-                      fontSize: '10px',
-                      letterSpacing: '0.15em',
-                      textTransform: 'uppercase',
-                      color: '#4a5a3a',
-                      backgroundColor: '#0a0f0b',
-                      borderBottom: '1px solid #2a3020'
+                      padding: '6px 12px', fontSize: '10px', letterSpacing: '0.15em',
+                      textTransform: 'uppercase', color: '#4a5a3a',
+                      backgroundColor: '#0a0f0b', borderBottom: '1px solid #2a3020'
                     }}>
                       {region}ern Operation
                     </td>
@@ -274,15 +284,18 @@ export default function Home() {
                             backgroundColor: weekend ? '#0d1009' : undefined,
                           }}>
                             {op && (
-                              <div title={op.operation_types?.name} style={{
-                                backgroundColor: op.operation_types?.color || '#666',
-                                color: '#fff',
-                                width: '28px', height: '22px', borderRadius: '3px',
-                                margin: '0 auto', fontSize: '8px', display: 'flex',
-                                alignItems: 'center', justifyContent: 'center',
-                                letterSpacing: '0.05em', cursor: 'default'
-                              }}>
-                                {op.operation_types?.name?.slice(0, 2).toUpperCase()}
+                              <div
+                                onClick={(e) => handleCellClick(op, field.name, e)}
+                                title={op.operation_types?.name}
+                                style={{
+                                  backgroundColor: op.operation_types?.color || '#666',
+                                  color: '#fff',
+                                  width: '28px', height: '22px', borderRadius: '3px',
+                                  margin: '0 auto', fontSize: '8px', display: 'flex',
+                                  alignItems: 'center', justifyContent: 'center',
+                                  letterSpacing: '0.05em', cursor: 'pointer'
+                                }}>
+                                {op.operation_types?.name?.replace('Tillage - ', '').slice(0, 2).toUpperCase()}
                               </div>
                             )}
                           </td>
@@ -297,15 +310,83 @@ export default function Home() {
         </div>
       )}
 
+      {/* Operation Popup */}
+{selectedOp && (
+  <div
+    onClick={e => e.stopPropagation()}
+    style={{
+      position: 'fixed',
+      left: '50%',
+      top: '50%',
+      transform: 'translate(-50%, -50%)',
+      backgroundColor: '#111612',
+      border: '1px solid #2a3020',
+      borderRadius: '6px',
+      padding: '12px 16px',
+      zIndex: 999,
+      minWidth: '200px',
+      boxShadow: '0 4px 16px rgba(0,0,0,0.4)'
+    }}>
+    <div style={{ fontSize: '13px', color: '#c8d4a0', marginBottom: '4px', fontWeight: 'bold' }}>
+      {selectedOp.fieldName}
+    </div>
+    <div style={{ fontSize: '12px', color: '#8a9a6a', marginBottom: '2px' }}>
+      {selectedOp.op.operation_types?.name}
+    </div>
+    <div style={{ fontSize: '12px', color: '#6b7a5a', marginBottom: '12px' }}>
+      {new Date(selectedOp.op.date + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+    </div>
+    {selectedOp.op.notes && (
+      <div style={{ fontSize: '12px', color: '#6b7a5a', marginBottom: '12px', fontStyle: 'italic' }}>
+        {selectedOp.op.notes}
+      </div>
+    )}
+    <div style={{ display: 'flex', gap: '8px' }}>
+      <button onClick={() => { setEditOp(selectedOp.op); setSelectedOp(null) }} style={{
+        padding: '5px 12px', backgroundColor: '#1a2a3a', border: 'none',
+        color: '#aac8ff', borderRadius: '4px', cursor: 'pointer', fontSize: '12px'
+      }}>
+        Edit
+      </button>
+      <button onClick={handleDelete} disabled={deleting} style={{
+        padding: '5px 12px', backgroundColor: '#6b1a1a', border: 'none',
+        color: '#ffaaaa', borderRadius: '4px', cursor: 'pointer', fontSize: '12px'
+      }}>
+        {deleting ? 'Deleting...' : 'Delete'}
+      </button>
+      <button onClick={() => setSelectedOp(null)} style={{
+        padding: '5px 12px', background: 'none', border: '1px solid #2a3020',
+        color: '#6b7a5a', borderRadius: '4px', cursor: 'pointer', fontSize: '12px'
+      }}>
+        Cancel
+      </button>
+    </div>
+  </div>
+)}
+
       {/* Add Operation Modal */}
       {showModal && (
         <AddOperationModal
           fields={fields}
           opTypes={opTypes}
           onClose={() => setShowModal(false)}
-          onSaved={() => {
-            setShowModal(false)
-            loadData()
+          onSaved={() => { setShowModal(false); loadData() }}
+        />
+      )}
+
+      {/* Edit Operation Modal */}
+      {editOp && (
+        <AddOperationModal
+          fields={fields}
+          opTypes={opTypes}
+          onClose={() => setEditOp(null)}
+          onSaved={() => { setEditOp(null); loadData() }}
+          editOperation={{
+            id: editOp.id,
+            field_id: editOp.field_id,
+            operation_type_id: editOp.operation_type_id,
+            date: editOp.date,
+            notes: editOp.notes || ''
           }}
         />
       )}
