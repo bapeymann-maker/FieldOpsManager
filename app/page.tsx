@@ -3,6 +3,7 @@
 import React, { useState, useEffect } from 'react'
 import dynamic from 'next/dynamic'
 import { getFields, getOperations, getOperationTypes } from '@/lib/data'
+import AddOperationModal from '@/components/AddOperationModal'
 
 const FieldMap = dynamic(() => import('@/components/FieldMap'), { ssr: false })
 
@@ -40,6 +41,7 @@ export default function Home() {
   const [opTypes, setOpTypes] = useState<OperationType[]>([])
   const [loading, setLoading] = useState(true)
   const [view, setView] = useState<'calendar' | 'map'>('calendar')
+  const [showModal, setShowModal] = useState(false)
 
   const today = now.getDate()
   const currentMonth = now.getMonth()
@@ -48,25 +50,26 @@ export default function Home() {
   const days = Array.from({ length: daysInMonth }, (_, i) => i + 1)
   const monthName = new Date(year, month).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
 
-  useEffect(() => {
-    async function loadData() {
-      setLoading(true)
-      try {
-        const startDate = `${year}-${String(month + 1).padStart(2, '0')}-01`
-        const endDate = `${year}-${String(month + 1).padStart(2, '0')}-${String(daysInMonth).padStart(2, '0')}`
-        const [fieldsData, opsData, opTypesData] = await Promise.all([
-          getFields(),
-          getOperations(startDate, endDate),
-          getOperationTypes()
-        ])
-        setFields(fieldsData || [])
-        setOperations(opsData || [])
-        setOpTypes(opTypesData || [])
-      } catch (err) {
-        console.error('Error loading data:', err)
-      }
-      setLoading(false)
+  async function loadData() {
+    setLoading(true)
+    try {
+      const startDate = `${year}-${String(month + 1).padStart(2, '0')}-01`
+      const endDate = `${year}-${String(month + 1).padStart(2, '0')}-${String(daysInMonth).padStart(2, '0')}`
+      const [fieldsData, opsData, opTypesData] = await Promise.all([
+        getFields(),
+        getOperations(startDate, endDate),
+        getOperationTypes()
+      ])
+      setFields(fieldsData || [])
+      setOperations(opsData || [])
+      setOpTypes(opTypesData || [])
+    } catch (err) {
+      console.error('Error loading data:', err)
     }
+    setLoading(false)
+  }
+
+  useEffect(() => {
     loadData()
   }, [year, month, daysInMonth])
 
@@ -85,7 +88,6 @@ export default function Home() {
     else setMonth(m => m + 1)
   }
 
-  // Build fields with daysSinceWork for map heat
   const fieldsWithHeat = fields.map(f => {
     const fieldOps = operations.filter(op => op.field_id === f.id)
     const latest = fieldOps.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())[0]
@@ -101,7 +103,7 @@ export default function Home() {
           <div style={{ fontSize: '11px', letterSpacing: '0.2em', color: '#6b7a5a', textTransform: 'uppercase', marginBottom: '4px' }}>Field Operations Manager</div>
           <h1 style={{ fontSize: '28px', fontWeight: 'normal', margin: 0, color: '#c8d4a0' }}>Activity Calendar</h1>
         </div>
-        <div style={{ display: 'flex', gap: '16px', alignItems: 'center' }}>
+        <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
           <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
             {opTypes.map(op => (
               <div key={op.name} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', color: '#8a9a6a' }}>
@@ -123,7 +125,26 @@ export default function Home() {
               color: view === 'map' ? '#c8d4a0' : '#6b7a5a'
             }}>Heat Map</button>
           </div>
+          {/* Log Operation Button */}
+          <button onClick={() => setShowModal(true)} style={{
+            padding: '6px 16px', backgroundColor: '#2d6a2d', border: 'none',
+            color: '#fff', borderRadius: '4px', cursor: 'pointer', fontSize: '12px',
+            letterSpacing: '0.05em'
+          }}>
+            + Log Operation
+          </button>
         </div>
+      </div>
+
+      {/* JD Connect Banner */}
+      <div style={{ padding: '10px 32px', backgroundColor: '#0a1208', borderBottom: '1px solid #2a3020', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <span style={{ fontSize: '12px', color: '#6b7a5a' }}>John Deere Operations Center</span>
+        <a href="/api/auth/jd" style={{
+          padding: '5px 14px', backgroundColor: '#367c2b', color: '#fff',
+          borderRadius: '4px', fontSize: '12px', textDecoration: 'none'
+        }}>
+          Connect John Deere
+        </a>
       </div>
 
       {/* Month Nav */}
@@ -253,6 +274,19 @@ export default function Home() {
             </tbody>
           </table>
         </div>
+      )}
+
+      {/* Add Operation Modal */}
+      {showModal && (
+        <AddOperationModal
+          fields={fields}
+          opTypes={opTypes}
+          onClose={() => setShowModal(false)}
+          onSaved={() => {
+            setShowModal(false)
+            loadData()
+          }}
+        />
       )}
     </div>
   )

@@ -5,6 +5,7 @@ export async function getFields() {
     .from('fields')
     .select('*')
     .order('name')
+    .order('region')
   if (error) throw error
   return data
 }
