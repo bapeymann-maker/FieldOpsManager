@@ -13,35 +13,62 @@ type Field = {
   region: string | null
   boundary: object | null
   daysSinceWork?: number
+  daysSinceSeeding?: number
+  isInCrop?: boolean
 }
 
-function getHeatColor(days: number | undefined): string {
-  if (days === undefined || days === null) return '#0a0a1a'
-  if (days === 0)  return '#ff0000'
-  if (days <= 3)   return '#ff1100'
-  if (days <= 6)   return '#ff3300'
-  if (days <= 9)   return '#ff6600'
-  if (days <= 12)  return '#ff9900'
-  if (days <= 15)  return '#ffcc00'
-  if (days <= 18)  return '#ccdd00'
-  if (days <= 21)  return '#88bb00'
-  if (days <= 24)  return '#44aa22'
-  if (days <= 27)  return '#228833'
-  if (days <= 30)  return '#116644'
-  if (days <= 33)  return '#0d5566'
-  if (days <= 36)  return '#0a4488'
-  if (days <= 39)  return '#0833aa'
-  if (days <= 42)  return '#0622cc'
-  if (days <= 45)  return '#0411dd'
-  if (days <= 48)  return '#0208ee'
-  if (days <= 51)  return '#0105ff'
-  return '#000a2a'
+// Reversed: recent = cold blue, old = hot red
+function getWorkHeatColor(days: number | undefined): string {
+  if (days === undefined || days === null) return '#1a0000' // never worked - dark red
+  if (days === 0)  return '#0000ff' // today - pure blue
+  if (days <= 3)   return '#0011ff'
+  if (days <= 6)   return '#0033ff'
+  if (days <= 9)   return '#0066ff'
+  if (days <= 12)  return '#0099ff'
+  if (days <= 15)  return '#00ccff'
+  if (days <= 18)  return '#00ddcc'
+  if (days <= 21)  return '#00bb88'
+  if (days <= 24)  return '#22aa44'
+  if (days <= 27)  return '#338833'
+  if (days <= 30)  return '#446611'
+  if (days <= 33)  return '#666600'
+  if (days <= 36)  return '#884400'
+  if (days <= 39)  return '#aa3300'
+  if (days <= 42)  return '#cc2200'
+  if (days <= 45)  return '#dd1100'
+  if (days <= 48)  return '#ee0800'
+  if (days <= 51)  return '#ff0500'
+  return '#ff0000' // 52+ days - hot red
 }
 
-export default function FieldMap({ fields, focusFieldId }: { fields: Field[], focusFieldId?: string | null }) {
+// Daily activity: today = blue, 7+ days = red
+function getDailyActivityColor(days: number | undefined): string {
+  if (days === undefined || days === null) return '#2a0000'
+  if (days === 0) return '#4B0082' // Indigo
+  if (days === 1) return '#0000ff' // Blue
+  if (days === 2) return '#008000' // Green
+  if (days === 3) return '#ffff00' // Yellow
+  if (days === 4) return '#ffa500' // Yellow Orange
+  if (days === 5) return '#ff6600' // Orange
+  if (days === 6) return '#ff3300' // Red Orange
+  return '#ff0000'                  // 7+ days - Red
+}
+
+export default function FieldMap({
+  fields,
+  focusFieldId,
+  mode = 'work'
+}: {
+  fields: Field[]
+  focusFieldId?: string | null
+  mode?: 'work' | 'daily'
+}) {
   const mapContainer = useRef<HTMLDivElement>(null)
   const map = useRef<mapboxgl.Map | null>(null)
   const mapLoaded = useRef(false)
+
+  const getColor = mode === 'daily' ? getDailyActivityColor : getWorkHeatColor
+  const daysField = mode === 'daily' ? 'daysSinceWork' : 'daysSinceWork'
 
   useEffect(() => {
     if (map.current || !mapContainer.current) return
@@ -66,8 +93,9 @@ export default function FieldMap({ fields, focusFieldId }: { fields: Field[], fo
               id: f.id,
               name: f.name,
               acres: f.acres,
-              color: getHeatColor(f.daysSinceWork),
-              daysSinceWork: f.daysSinceWork ?? -1
+              color: getColor(f[daysField]),
+              daysSinceWork: f.daysSinceWork ?? -1,
+              isInCrop: f.isInCrop ? 1 : 0
             },
             geometry: f.boundary as GeoJSON.Geometry
           }))
@@ -81,7 +109,7 @@ export default function FieldMap({ fields, focusFieldId }: { fields: Field[], fo
         source: 'fields',
         paint: {
           'fill-color': ['get', 'color'],
-          'fill-opacity': 0.7
+          'fill-opacity': 0.75
         }
       })
 
@@ -92,7 +120,7 @@ export default function FieldMap({ fields, focusFieldId }: { fields: Field[], fo
         paint: {
           'line-color': '#c8d4a0',
           'line-width': 1,
-          'line-opacity': 0.5
+          'line-opacity': 0.4
         }
       })
 
@@ -124,15 +152,38 @@ export default function FieldMap({ fields, focusFieldId }: { fields: Field[], fo
         map.current!.getCanvas().style.cursor = ''
       })
 
-      if (focusFieldId) {
-        focusOnField(focusFieldId)
-      }
+      if (focusFieldId) focusOnField(focusFieldId)
     })
   }, [])
 
+  // Update colors when mode changes
   useEffect(() => {
     if (!map.current || !mapLoaded.current) return
+    const source = map.current.getSource('fields') as mapboxgl.GeoJSONSource
+    if (!source) return
 
+    const geojson: GeoJSON.FeatureCollection = {
+      type: 'FeatureCollection',
+      features: fields
+        .filter(f => f.boundary)
+        .map(f => ({
+          type: 'Feature',
+          properties: {
+            id: f.id,
+            name: f.name,
+            acres: f.acres,
+            color: getColor(f.daysSinceWork),
+            daysSinceWork: f.daysSinceWork ?? -1,
+            isInCrop: f.isInCrop ? 1 : 0
+          },
+          geometry: f.boundary as GeoJSON.Geometry
+        }))
+    }
+    source.setData(geojson)
+  }, [mode, fields])
+
+  useEffect(() => {
+    if (!map.current || !mapLoaded.current) return
     if (!focusFieldId) {
       map.current.flyTo({ center: [-94.5, 43.9], zoom: 8, duration: 1200 })
       map.current.setPaintProperty('fields-highlight', 'line-opacity',
@@ -140,7 +191,6 @@ export default function FieldMap({ fields, focusFieldId }: { fields: Field[], fo
       )
       return
     }
-
     focusOnField(focusFieldId)
   }, [focusFieldId])
 
@@ -163,7 +213,6 @@ export default function FieldMap({ fields, focusFieldId }: { fields: Field[], fo
       }
     }
     extractCoords(geom)
-
     if (coords.length === 0) return
 
     const lngs = coords.map(c => c[0])

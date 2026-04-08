@@ -64,9 +64,11 @@ export default function Home() {
   const [fields, setFields] = useState<Field[]>([])
   const [operations, setOperations] = useState<Operation[]>([])
   const [allYearOps, setAllYearOps] = useState<Operation[]>([])
+  const [allOps, setAllOps] = useState<Operation[]>([])
   const [opTypes, setOpTypes] = useState<OperationType[]>([])
   const [loading, setLoading] = useState(true)
   const [view, setView] = useState<'calendar' | 'year' | 'map' | 'log'>('calendar')
+  const [mapMode, setMapMode] = useState<'work' | 'daily'>('work')
   const [showModal, setShowModal] = useState(false)
   const [editOp, setEditOp] = useState<Operation | null>(null)
   const [selectedOp, setSelectedOp] = useState<SelectedOp | null>(null)
@@ -113,8 +115,14 @@ export default function Home() {
         .select('*, fields(name), operation_types(name, color)')
         .gte('date', startDate)
         .lte('date', endDate)
+      // Load all ops for heat map in-crop calculation
+      const { data: allOpsData } = await supabaseClient
+        .from('operations')
+        .select('*, operation_types(name, color)')
+        .order('date', { ascending: false })
       setFields(fieldsData || [])
       setOperations(opsData || [])
+      setAllOps(allOpsData || [])
       setOpTypes(opTypesData || [])
     } catch (err) { console.error(err) }
     setLoading(false)
@@ -129,8 +137,13 @@ export default function Home() {
         .select('*, fields(name), operation_types(name, color)')
         .gte('date', `${year}-01-01`)
         .lte('date', `${year}-12-31`)
+      const { data: allOpsData } = await supabaseClient
+        .from('operations')
+        .select('*, operation_types(name, color)')
+        .order('date', { ascending: false })
       setFields(fieldsData || [])
       setAllYearOps(opsData || [])
+      setAllOps(allOpsData || [])
       setOpTypes(opTypesData || [])
     } catch (err) { console.error(err) }
     setLoading(false)
@@ -145,8 +158,13 @@ export default function Home() {
         .select('*, fields(name), operation_types(name, color)')
         .order('date', { ascending: false })
         .limit(100)
+      const { data: allOpsData } = await supabaseClient
+        .from('operations')
+        .select('*, operation_types(name, color)')
+        .order('date', { ascending: false })
       setFields(fieldsData || [])
       setOperations(opsData || [])
+      setAllOps(allOpsData || [])
       setOpTypes(opTypesData || [])
     } catch (err) { console.error(err) }
     setLoading(false)
@@ -231,11 +249,37 @@ export default function Home() {
     URL.revokeObjectURL(url)
   }
 
+  // Build fields with heat map data
+  // isInCrop = seeded but not yet harvested after that seeding
+  const seedingTypeNames = ['Seeding']
+  const harvestTypeNames = ['Harvest']
+
   const fieldsWithHeat = fields.map(f => {
-    const fieldOps = operations.filter(op => op.field_id === f.id)
-    const latest = fieldOps.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())[0]
-    return { ...f, daysSinceWork: latest ? daysSince(latest.date) : undefined }
+    const fieldOps = allOps
+      .filter(op => op.field_id === f.id && op.date >= `${currentYear}-01-01`)
+      .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+
+    const latest = fieldOps[0]
+    const daysSinceWork = latest ? daysSince(latest.date) : undefined
+
+    // Find most recent seeding
+    const lastSeeding = fieldOps.find(op => seedingTypeNames.includes(op.operation_types?.name))
+    // Find most recent harvest
+    const lastHarvest = fieldOps.find(op => harvestTypeNames.includes(op.operation_types?.name))
+
+    // isInCrop = seeded and either never harvested or seeded more recently than harvested
+    const isInCrop = lastSeeding ? (
+      !lastHarvest || new Date(lastSeeding.date) > new Date(lastHarvest.date)
+    ) : false
+
+    return { ...f, daysSinceWork, isInCrop }
   })
+
+  // For work heat map: show all fields with boundaries
+  // For daily mode: only show fields that are currently in crop
+  const heatMapFields = mapMode === 'daily'
+    ? fieldsWithHeat.filter(f => f.isInCrop)
+    : fieldsWithHeat
 
   const onSaved = () => {
     setShowModal(false)
@@ -419,13 +463,7 @@ export default function Home() {
                     {!collapsed && sectionFields.map((field, fi) => (
                       <tr key={field.id} style={{ backgroundColor: fi % 2 === 0 ? '#111612' : '#0f1410' }}>
                         <td style={{ padding: '6px 12px', fontSize: '12px', color: '#a8b888', borderBottom: '1px solid #1a2016', whiteSpace: 'nowrap', position: 'sticky', left: 0, backgroundColor: fi % 2 === 0 ? '#111612' : '#0f1410' }}>
-                          <span
-                            onClick={e => { e.stopPropagation(); goToFieldOnMap(field.id) }}
-                            style={fieldNameStyle}
-                            title="View on heat map"
-                          >
-                            {field.name}
-                          </span>
+                          <span onClick={e => { e.stopPropagation(); goToFieldOnMap(field.id) }} style={fieldNameStyle} title="View on heat map">{field.name}</span>
                           {field.acres && <span style={{ fontSize: '10px', color: '#4a5a3a', marginLeft: '6px' }}>{field.acres}ac</span>}
                         </td>
                         {MONTHS.map((m, mi) => {
@@ -458,29 +496,72 @@ export default function Home() {
       {/* Map View */}
       {!loading && view === 'map' && (
         <div style={{ padding: isMobile ? '12px 16px' : '0 32px 32px' }}>
-          <div style={{ marginBottom: '12px', display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
-            {[
-              { label: 'Today', color: '#ff0000' },
-              { label: '1-6d', color: '#ff3300' },
-              { label: '7-12d', color: '#ff9900' },
-              { label: '13-21d', color: '#88bb00' },
-              { label: '22-30d', color: '#116644' },
-              { label: '31-39d', color: '#0833aa' },
-              { label: '40+d', color: '#0105ff' },
-              { label: 'Never', color: '#0a0a1a' },
-            ].map(item => (
-              <div key={item.label} style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px', color: '#8a9a6a' }}>
-                <div style={{ width: '10px', height: '10px', borderRadius: '2px', backgroundColor: item.color }} />
-                {item.label}
+
+          {/* Map mode toggle */}
+          <div style={{ marginBottom: '12px', display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', border: '1px solid #2a3020', borderRadius: '4px', overflow: 'hidden' }}>
+              <button onClick={() => setMapMode('work')} style={{
+                padding: '5px 14px', cursor: 'pointer', fontSize: '12px', border: 'none',
+                backgroundColor: mapMode === 'work' ? '#2a3020' : 'transparent',
+                color: mapMode === 'work' ? '#c8d4a0' : '#6b7a5a'
+              }}>Field Activity</button>
+              <button onClick={() => setMapMode('daily')} style={{
+                padding: '5px 14px', cursor: 'pointer', fontSize: '12px', border: 'none',
+                backgroundColor: mapMode === 'daily' ? '#2a3020' : 'transparent',
+                color: mapMode === 'daily' ? '#c8d4a0' : '#6b7a5a'
+              }}>Daily Activity (In Crop)</button>
+            </div>
+
+            {/* Legend */}
+            {mapMode === 'work' ? (
+              <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
+                {[
+                  { label: 'Today', color: '#0000ff' },
+                  { label: '1-6d', color: '#0033ff' },
+                  { label: '7-12d', color: '#0099ff' },
+                  { label: '13-21d', color: '#00bb88' },
+                  { label: '22-30d', color: '#446611' },
+                  { label: '31-39d', color: '#aa3300' },
+                  { label: '40+d', color: '#ff0000' },
+                  { label: 'Never', color: '#1a0000' },
+                ].map(item => (
+                  <div key={item.label} style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px', color: '#8a9a6a' }}>
+                    <div style={{ width: '10px', height: '10px', borderRadius: '2px', backgroundColor: item.color }} />
+                    {item.label}
+                  </div>
+                ))}
               </div>
-            ))}
+            ) : (
+              <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
+                {[
+                  { label: 'Today', color: '#4B0082' },
+                  { label: '1 day', color: '#0000ff' },
+                  { label: '2 days', color: '#008000' },
+                  { label: '3 days', color: '#ffff00' },
+                  { label: '4 days', color: '#ffa500' },
+                  { label: '5 days', color: '#ff6600' },
+                  { label: '6 days', color: '#ff3300' },
+                  { label: '7+ days', color: '#ff0000' },
+                ].map(item => (
+                  <div key={item.label} style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px', color: '#8a9a6a' }}>
+                    <div style={{ width: '10px', height: '10px', borderRadius: '2px', backgroundColor: item.color }} />
+                    {item.label}
+                  </div>
+                ))}
+                <span style={{ fontSize: '11px', color: '#4a5a3a', marginLeft: '4px' }}>
+                  — showing {heatMapFields.filter(f => f.isInCrop).length} fields in crop
+                </span>
+              </div>
+            )}
+
             {focusFieldId && (
               <button onClick={() => setFocusFieldId(null)} style={{ marginLeft: 'auto', padding: '4px 10px', background: 'none', border: '1px solid #2a3020', color: '#6b7a5a', borderRadius: '4px', cursor: 'pointer', fontSize: '11px' }}>
                 Reset view
               </button>
             )}
           </div>
-          <FieldMap fields={fieldsWithHeat} focusFieldId={focusFieldId} />
+
+          <FieldMap fields={heatMapFields} focusFieldId={focusFieldId} mode={mapMode} />
         </div>
       )}
 
@@ -520,13 +601,7 @@ export default function Home() {
                     {!collapsed && sectionFields.map((field, fi) => (
                       <tr key={field.id} style={{ backgroundColor: fi % 2 === 0 ? '#111612' : '#0f1410' }}>
                         <td style={{ padding: '6px 12px', fontSize: '13px', color: '#a8b888', borderBottom: '1px solid #1a2016', whiteSpace: 'nowrap', position: 'sticky', left: 0, backgroundColor: fi % 2 === 0 ? '#111612' : '#0f1410' }}>
-                          <span
-                            onClick={e => { e.stopPropagation(); goToFieldOnMap(field.id) }}
-                            style={fieldNameStyle}
-                            title="View on heat map"
-                          >
-                            {field.name}
-                          </span>
+                          <span onClick={e => { e.stopPropagation(); goToFieldOnMap(field.id) }} style={fieldNameStyle} title="View on heat map">{field.name}</span>
                           {field.acres && <span style={{ fontSize: '10px', color: '#4a5a3a', marginLeft: '6px' }}>{field.acres}ac</span>}
                         </td>
                         {days.map(day => {
