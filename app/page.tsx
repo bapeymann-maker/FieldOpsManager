@@ -23,6 +23,7 @@ type Operation = {
   field_id: string
   operation_type_id: string
   notes: string
+  source: string
   fields: { name: string }
   operation_types: { name: string; color: string }
 }
