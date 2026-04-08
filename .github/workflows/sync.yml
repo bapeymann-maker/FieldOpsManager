@@ -1,0 +1,16 @@
+name: Nightly JD Sync
+
+on:
+  schedule:
+    - cron: '0 7 * * *'  # 7 AM UTC = 2 AM CDT
+  workflow_dispatch:      # allows manual trigger from GitHub
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger JD Sync
+        run: |
+          curl -X GET "${{ secrets.APP_URL }}/api/cron/sync" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            -f
