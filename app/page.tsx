@@ -15,7 +15,10 @@ const supabase = createBrowserClient(
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
 )
 
-type Field = { id: string; name: string; acres: number | null; region: string | null; boundary: object | null; client: string | null }
+type Field = {
+  id: string; name: string; acres: number | null; region: string | null;
+  boundary: object | null; client: string | null; cert_status: string | null;
+}
 type OperationType = { id: string; name: string; color: string }
 type Operation = {
   id: string
@@ -38,6 +41,15 @@ const SECTIONS = [
   { label: 'Southern Operation', filter: (f: Field) => f.region === 'South' && f.client !== 'LB Pork' },
   { label: 'LB Pork', filter: (f: Field) => f.client === 'LB Pork' },
 ]
+
+function certBadge(status: string | null) {
+  switch (status) {
+    case 'Certified':    return 'O'
+    case 'Transition 2': return 'T2'
+    case 'Transition 1': return 'T1'
+    default:             return 'CONV'
+  }
+}
 
 function getDaysInMonth(year: number, month: number) {
   return new Date(year, month + 1, 0).getDate()
@@ -115,7 +127,6 @@ export default function Home() {
         .select('*, fields(name), operation_types(name, color)')
         .gte('date', startDate)
         .lte('date', endDate)
-      // Load all ops for heat map in-crop calculation
       const { data: allOpsData } = await supabaseClient
         .from('operations')
         .select('*, operation_types(name, color)')
@@ -234,11 +245,12 @@ export default function Home() {
       const field = fields.find(f => f.id === op.field_id)
       return [
         new Date(op.date + 'T12:00:00').toLocaleDateString('en-US'),
-        field?.name || '', field?.region || '', field?.client || '', field?.acres || '',
+        field?.name || '', field?.region || '', field?.client || '',
+        field?.cert_status || '', field?.acres || '',
         op.operation_types?.name || '', op.notes || '', op.source || 'manual'
       ]
     })
-    const headers = ['Date', 'Field', 'Region', 'Client', 'Acres', 'Operation Type', 'Notes', 'Source']
+    const headers = ['Date', 'Field', 'Region', 'Client', 'Cert Status', 'Acres', 'Operation Type', 'Notes', 'Source']
     const csv = [headers, ...rows].map(r => r.map(v => `"${v}"`).join(',')).join('\n')
     const blob = new Blob([csv], { type: 'text/csv' })
     const url = URL.createObjectURL(blob)
@@ -249,11 +261,6 @@ export default function Home() {
     URL.revokeObjectURL(url)
   }
 
-  // Build fields with heat map data
-  // isInCrop = seeded but not yet harvested after that seeding
-  const seedingTypeNames = ['Seeding']
-  const harvestTypeNames = ['Harvest']
-
   const fieldsWithHeat = fields.map(f => {
     const fieldOps = allOps
       .filter(op => op.field_id === f.id && op.date >= `${currentYear}-01-01`)
@@ -262,12 +269,9 @@ export default function Home() {
     const latest = fieldOps[0]
     const daysSinceWork = latest ? daysSince(latest.date) : undefined
 
-    // Find most recent seeding
-    const lastSeeding = fieldOps.find(op => seedingTypeNames.includes(op.operation_types?.name))
-    // Find most recent harvest
-    const lastHarvest = fieldOps.find(op => harvestTypeNames.includes(op.operation_types?.name))
+    const lastSeeding = fieldOps.find(op => op.operation_types?.name === 'Seeding')
+    const lastHarvest = fieldOps.find(op => op.operation_types?.name === 'Harvest')
 
-    // isInCrop = seeded and either never harvested or seeded more recently than harvested
     const isInCrop = lastSeeding ? (
       !lastHarvest || new Date(lastSeeding.date) > new Date(lastHarvest.date)
     ) : false
@@ -275,8 +279,6 @@ export default function Home() {
     return { ...f, daysSinceWork, isInCrop }
   })
 
-  // For work heat map: show all fields with boundaries
-  // For daily mode: only show fields that are currently in crop
   const heatMapFields = mapMode === 'daily'
     ? fieldsWithHeat.filter(f => f.isInCrop)
     : fieldsWithHeat
@@ -308,6 +310,24 @@ export default function Home() {
     cursor: 'pointer',
     borderBottom: '1px dotted #4a5a3a',
     color: '#a8b888',
+  }
+
+  function FieldNameCell({ field }: { field: Field }) {
+    return (
+      <>
+        <span
+          onClick={e => { e.stopPropagation(); goToFieldOnMap(field.id) }}
+          style={fieldNameStyle}
+          title="View on heat map"
+        >
+          {field.name}
+        </span>
+        <span style={{ fontSize: '9px', color: '#6b7a5a', marginLeft: '5px' }}>
+          {certBadge(field.cert_status)}
+        </span>
+        {field.acres && <span style={{ fontSize: '10px', color: '#4a5a3a', marginLeft: '4px' }}>{field.acres}ac</span>}
+      </>
+    )
   }
 
   return (
@@ -419,7 +439,10 @@ export default function Home() {
                 style={{ backgroundColor: '#111612', border: '1px solid #2a3020', borderRadius: '6px', padding: '12px 16px', marginBottom: '8px', cursor: 'pointer', borderLeft: `4px solid ${op.operation_types?.color || '#666'}` }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                   <div>
-                    <div style={{ fontSize: '14px', color: '#c8d4a0', marginBottom: '3px' }}>{field?.name}</div>
+                    <div style={{ fontSize: '14px', color: '#c8d4a0', marginBottom: '3px' }}>
+                      {field?.name}
+                      <span style={{ fontSize: '9px', color: '#6b7a5a', marginLeft: '6px' }}>{certBadge(field?.cert_status || null)}</span>
+                    </div>
                     <div style={{ fontSize: '12px', color: '#8a9a6a' }}>{op.operation_types?.name}</div>
                     {op.notes && <div style={{ fontSize: '11px', color: '#6b7a5a', marginTop: '3px', fontStyle: 'italic' }}>{op.notes}</div>}
                   </div>
@@ -441,7 +464,7 @@ export default function Home() {
           <table style={{ borderCollapse: 'collapse', width: '100%', minWidth: '900px' }}>
             <thead>
               <tr>
-                <th style={{ width: '180px', padding: '8px 12px', textAlign: 'left', fontSize: '11px', letterSpacing: '0.15em', color: '#6b7a5a', textTransform: 'uppercase', borderBottom: '1px solid #2a3020', position: 'sticky', left: 0, backgroundColor: '#0f1410' }}>Field</th>
+                <th style={{ width: '200px', padding: '8px 12px', textAlign: 'left', fontSize: '11px', letterSpacing: '0.15em', color: '#6b7a5a', textTransform: 'uppercase', borderBottom: '1px solid #2a3020', position: 'sticky', left: 0, backgroundColor: '#0f1410' }}>Field</th>
                 {MONTHS.map((m, i) => (
                   <th key={m} style={{ padding: '8px 4px', textAlign: 'center', fontSize: '11px', color: i === currentMonth && year === currentYear ? '#c8d4a0' : '#6b7a5a', borderBottom: '1px solid #2a3020', borderLeft: i === currentMonth && year === currentYear ? '2px solid #c8d4a040' : undefined, fontWeight: i === currentMonth && year === currentYear ? 'bold' : 'normal' }}>{m}</th>
                 ))}
@@ -463,8 +486,7 @@ export default function Home() {
                     {!collapsed && sectionFields.map((field, fi) => (
                       <tr key={field.id} style={{ backgroundColor: fi % 2 === 0 ? '#111612' : '#0f1410' }}>
                         <td style={{ padding: '6px 12px', fontSize: '12px', color: '#a8b888', borderBottom: '1px solid #1a2016', whiteSpace: 'nowrap', position: 'sticky', left: 0, backgroundColor: fi % 2 === 0 ? '#111612' : '#0f1410' }}>
-                          <span onClick={e => { e.stopPropagation(); goToFieldOnMap(field.id) }} style={fieldNameStyle} title="View on heat map">{field.name}</span>
-                          {field.acres && <span style={{ fontSize: '10px', color: '#4a5a3a', marginLeft: '6px' }}>{field.acres}ac</span>}
+                          <FieldNameCell field={field} />
                         </td>
                         {MONTHS.map((m, mi) => {
                           const monthOps = getOpsForMonth(field.id, mi)
@@ -496,23 +518,11 @@ export default function Home() {
       {/* Map View */}
       {!loading && view === 'map' && (
         <div style={{ padding: isMobile ? '12px 16px' : '0 32px 32px' }}>
-
-          {/* Map mode toggle */}
           <div style={{ marginBottom: '12px', display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
             <div style={{ display: 'flex', border: '1px solid #2a3020', borderRadius: '4px', overflow: 'hidden' }}>
-              <button onClick={() => setMapMode('work')} style={{
-                padding: '5px 14px', cursor: 'pointer', fontSize: '12px', border: 'none',
-                backgroundColor: mapMode === 'work' ? '#2a3020' : 'transparent',
-                color: mapMode === 'work' ? '#c8d4a0' : '#6b7a5a'
-              }}>Field Activity</button>
-              <button onClick={() => setMapMode('daily')} style={{
-                padding: '5px 14px', cursor: 'pointer', fontSize: '12px', border: 'none',
-                backgroundColor: mapMode === 'daily' ? '#2a3020' : 'transparent',
-                color: mapMode === 'daily' ? '#c8d4a0' : '#6b7a5a'
-              }}>Daily Activity (In Crop)</button>
+              <button onClick={() => setMapMode('work')} style={{ padding: '5px 14px', cursor: 'pointer', fontSize: '12px', border: 'none', backgroundColor: mapMode === 'work' ? '#2a3020' : 'transparent', color: mapMode === 'work' ? '#c8d4a0' : '#6b7a5a' }}>Field Activity</button>
+              <button onClick={() => setMapMode('daily')} style={{ padding: '5px 14px', cursor: 'pointer', fontSize: '12px', border: 'none', backgroundColor: mapMode === 'daily' ? '#2a3020' : 'transparent', color: mapMode === 'daily' ? '#c8d4a0' : '#6b7a5a' }}>Daily Activity (In Crop)</button>
             </div>
-
-            {/* Legend */}
             {mapMode === 'work' ? (
               <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
                 {[
@@ -549,18 +559,14 @@ export default function Home() {
                   </div>
                 ))}
                 <span style={{ fontSize: '11px', color: '#4a5a3a', marginLeft: '4px' }}>
-                  — showing {heatMapFields.filter(f => f.isInCrop).length} fields in crop
+                  — {heatMapFields.filter(f => f.isInCrop).length} fields in crop
                 </span>
               </div>
             )}
-
             {focusFieldId && (
-              <button onClick={() => setFocusFieldId(null)} style={{ marginLeft: 'auto', padding: '4px 10px', background: 'none', border: '1px solid #2a3020', color: '#6b7a5a', borderRadius: '4px', cursor: 'pointer', fontSize: '11px' }}>
-                Reset view
-              </button>
+              <button onClick={() => setFocusFieldId(null)} style={{ marginLeft: 'auto', padding: '4px 10px', background: 'none', border: '1px solid #2a3020', color: '#6b7a5a', borderRadius: '4px', cursor: 'pointer', fontSize: '11px' }}>Reset view</button>
             )}
           </div>
-
           <FieldMap fields={heatMapFields} focusFieldId={focusFieldId} mode={mapMode} />
         </div>
       )}
@@ -568,10 +574,10 @@ export default function Home() {
       {/* Month Calendar View */}
       {!loading && view === 'calendar' && fields.length > 0 && (
         <div style={{ padding: '0 32px 32px', overflowX: 'auto' }}>
-          <table style={{ borderCollapse: 'collapse', width: '100%', minWidth: `${daysInMonth * 36 + 160}px` }}>
+          <table style={{ borderCollapse: 'collapse', width: '100%', minWidth: `${daysInMonth * 36 + 180}px` }}>
             <thead>
               <tr>
-                <th style={{ width: '150px', padding: '8px 12px', textAlign: 'left', fontSize: '11px', letterSpacing: '0.15em', color: '#6b7a5a', textTransform: 'uppercase', borderBottom: '1px solid #2a3020', position: 'sticky', left: 0, backgroundColor: '#0f1410' }}>Field</th>
+                <th style={{ width: '180px', padding: '8px 12px', textAlign: 'left', fontSize: '11px', letterSpacing: '0.15em', color: '#6b7a5a', textTransform: 'uppercase', borderBottom: '1px solid #2a3020', position: 'sticky', left: 0, backgroundColor: '#0f1410' }}>Field</th>
                 {days.map(day => {
                   const weekday = new Date(year, month, day).toLocaleDateString('en-US', { weekday: 'short' }).charAt(0)
                   const isToday = day === today && month === currentMonth && year === currentYear
@@ -601,8 +607,7 @@ export default function Home() {
                     {!collapsed && sectionFields.map((field, fi) => (
                       <tr key={field.id} style={{ backgroundColor: fi % 2 === 0 ? '#111612' : '#0f1410' }}>
                         <td style={{ padding: '6px 12px', fontSize: '13px', color: '#a8b888', borderBottom: '1px solid #1a2016', whiteSpace: 'nowrap', position: 'sticky', left: 0, backgroundColor: fi % 2 === 0 ? '#111612' : '#0f1410' }}>
-                          <span onClick={e => { e.stopPropagation(); goToFieldOnMap(field.id) }} style={fieldNameStyle} title="View on heat map">{field.name}</span>
-                          {field.acres && <span style={{ fontSize: '10px', color: '#4a5a3a', marginLeft: '6px' }}>{field.acres}ac</span>}
+                          <FieldNameCell field={field} />
                         </td>
                         {days.map(day => {
                           const op = getOperation(field.id, day)
