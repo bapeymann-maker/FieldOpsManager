@@ -16,13 +16,26 @@ type Field = {
 }
 
 function getHeatColor(days: number | undefined): string {
-  if (days === undefined || days === null) return '#2a3020' // never worked - dark
-  if (days <= 1)  return '#ff2200' // today - hot red
-  if (days <= 7)  return '#ff6600' // this week - orange
-  if (days <= 14) return '#ffaa00' // two weeks - yellow
-  if (days <= 30) return '#88cc00' // month - yellow green
-  if (days <= 60) return '#226622' // two months - green
-  return '#1a3a1a'                  // old - cold dark green
+  if (days === undefined || days === null) return '#0a0a1a' // never worked - deep cold blue
+  if (days === 0)  return '#ff0000' // today - pure red
+  if (days <= 3)   return '#ff1100'
+  if (days <= 6)   return '#ff3300'
+  if (days <= 9)   return '#ff6600'
+  if (days <= 12)  return '#ff9900'
+  if (days <= 15)  return '#ffcc00'
+  if (days <= 18)  return '#ccdd00'
+  if (days <= 21)  return '#88bb00'
+  if (days <= 24)  return '#44aa22'
+  if (days <= 27)  return '#228833'
+  if (days <= 30)  return '#116644'
+  if (days <= 33)  return '#0d5566'
+  if (days <= 36)  return '#0a4488'
+  if (days <= 39)  return '#0833aa'
+  if (days <= 42)  return '#0622cc'
+  if (days <= 45)  return '#0411dd'
+  if (days <= 48)  return '#0208ee'
+  if (days <= 51)  return '#0105ff'
+  return '#000a2a' // 52+ days - deep cold blue
 }
 
 export default function FieldMap({ fields }: { fields: Field[] }) {

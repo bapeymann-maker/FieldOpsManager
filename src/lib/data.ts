@@ -4,8 +4,9 @@ export async function getFields() {
   const { data, error } = await supabase
     .from('fields')
     .select('*')
-    .order('name')
+    .order('client')
     .order('region')
+    .order('name')
   if (error) throw error
   return data
 }
