@@ -16,8 +16,8 @@ type Field = {
 }
 
 function getHeatColor(days: number | undefined): string {
-  if (days === undefined || days === null) return '#0a0a1a' // never worked - deep cold blue
-  if (days === 0)  return '#ff0000' // today - pure red
+  if (days === undefined || days === null) return '#0a0a1a'
+  if (days === 0)  return '#ff0000'
   if (days <= 3)   return '#ff1100'
   if (days <= 6)   return '#ff3300'
   if (days <= 9)   return '#ff6600'
@@ -35,12 +35,13 @@ function getHeatColor(days: number | undefined): string {
   if (days <= 45)  return '#0411dd'
   if (days <= 48)  return '#0208ee'
   if (days <= 51)  return '#0105ff'
-  return '#000a2a' // 52+ days - deep cold blue
+  return '#000a2a'
 }
 
-export default function FieldMap({ fields }: { fields: Field[] }) {
+export default function FieldMap({ fields, focusFieldId }: { fields: Field[], focusFieldId?: string | null }) {
   const mapContainer = useRef<HTMLDivElement>(null)
   const map = useRef<mapboxgl.Map | null>(null)
+  const mapLoaded = useRef(false)
 
   useEffect(() => {
     if (map.current || !mapContainer.current) return
@@ -53,6 +54,8 @@ export default function FieldMap({ fields }: { fields: Field[] }) {
     })
 
     map.current.on('load', () => {
+      mapLoaded.current = true
+
       const geojson: GeoJSON.FeatureCollection = {
         type: 'FeatureCollection',
         features: fields
@@ -93,14 +96,24 @@ export default function FieldMap({ fields }: { fields: Field[] }) {
         }
       })
 
-      // Popup on click
+      map.current!.addLayer({
+        id: 'fields-highlight',
+        type: 'line',
+        source: 'fields',
+        paint: {
+          'line-color': '#ffffff',
+          'line-width': 3,
+          'line-opacity': ['case', ['==', ['get', 'id'], ''], 1, 0]
+        }
+      })
+
       map.current!.on('click', 'fields-fill', (e) => {
         const props = e.features?.[0]?.properties
         if (!props) return
         const days = props.daysSinceWork === -1 ? 'Never worked' : `${props.daysSinceWork} days ago`
         new mapboxgl.Popup()
           .setLngLat(e.lngLat)
-          .setHTML(`<strong>${props.name}</strong><br/>${props.acres}ac<br/>Last worked: ${days}`)
+          .setHTML(`<strong>${props.name}</strong><br/>${props.acres ? props.acres + 'ac' : ''}<br/>Last worked: ${days}`)
           .addTo(map.current!)
       })
 
@@ -110,8 +123,67 @@ export default function FieldMap({ fields }: { fields: Field[] }) {
       map.current!.on('mouseleave', 'fields-fill', () => {
         map.current!.getCanvas().style.cursor = ''
       })
+
+      if (focusFieldId) {
+        focusOnField(focusFieldId)
+      }
     })
-  }, [fields])
+  }, [])
+
+  useEffect(() => {
+    if (!map.current || !mapLoaded.current) return
+
+    if (!focusFieldId) {
+      map.current.flyTo({ center: [-94.5, 43.9], zoom: 8, duration: 1200 })
+      map.current.setPaintProperty('fields-highlight', 'line-opacity',
+        ['case', ['==', ['get', 'id'], ''], 1, 0]
+      )
+      return
+    }
+
+    focusOnField(focusFieldId)
+  }, [focusFieldId])
+
+  function focusOnField(fieldId: string) {
+    const field = fields.find(f => f.id === fieldId)
+    if (!field?.boundary || !map.current) return
+
+    map.current.setPaintProperty('fields-highlight', 'line-opacity',
+      ['case', ['==', ['get', 'id'], fieldId], 1, 0]
+    )
+
+    const geom = field.boundary as GeoJSON.Geometry
+    const coords: number[][] = []
+
+    function extractCoords(g: GeoJSON.Geometry) {
+      if (g.type === 'Polygon') {
+        g.coordinates[0].forEach(c => coords.push(c as number[]))
+      } else if (g.type === 'MultiPolygon') {
+        g.coordinates.forEach(poly => poly[0].forEach(c => coords.push(c as number[])))
+      }
+    }
+    extractCoords(geom)
+
+    if (coords.length === 0) return
+
+    const lngs = coords.map(c => c[0])
+    const lats = coords.map(c => c[1])
+    const bounds = new mapboxgl.LngLatBounds(
+      [Math.min(...lngs), Math.min(...lats)],
+      [Math.max(...lngs), Math.max(...lats)]
+    )
+
+    map.current.fitBounds(bounds, { padding: 80, duration: 1200 })
+
+    const centerLng = (Math.min(...lngs) + Math.max(...lngs)) / 2
+    const centerLat = (Math.min(...lats) + Math.max(...lats)) / 2
+    const days = field.daysSinceWork === undefined ? 'Never worked' : `${field.daysSinceWork} days ago`
+
+    new mapboxgl.Popup({ closeOnClick: true })
+      .setLngLat([centerLng, centerLat])
+      .setHTML(`<strong>${field.name}</strong><br/>${field.acres ? field.acres + 'ac' : ''}<br/>Last worked: ${days}`)
+      .addTo(map.current)
+  }
 
   return (
     <div ref={mapContainer} style={{ width: '100%', height: '600px', borderRadius: '4px' }} />

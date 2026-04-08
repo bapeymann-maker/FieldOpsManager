@@ -72,6 +72,7 @@ export default function Home() {
   const [deleting, setDeleting] = useState(false)
   const [isMobile, setIsMobile] = useState(false)
   const [collapsedSections, setCollapsedSections] = useState<Record<string, boolean>>({})
+  const [focusFieldId, setFocusFieldId] = useState<string | null>(null)
 
   const today = now.getDate()
   const currentMonth = now.getMonth()
@@ -82,6 +83,11 @@ export default function Home() {
 
   function toggleSection(label: string) {
     setCollapsedSections(prev => ({ ...prev, [label]: !prev[label] }))
+  }
+
+  function goToFieldOnMap(fieldId: string) {
+    setFocusFieldId(fieldId)
+    setView('map')
   }
 
   useEffect(() => {
@@ -238,7 +244,7 @@ export default function Home() {
     else loadData()
   }
 
-  const sectionHeaderStyle = (label: string) => ({
+  const sectionHeaderStyle = {
     padding: '6px 12px',
     fontSize: '10px',
     letterSpacing: '0.15em',
@@ -251,7 +257,13 @@ export default function Home() {
     display: 'flex',
     alignItems: 'center',
     gap: '8px'
-  })
+  }
+
+  const fieldNameStyle = {
+    cursor: 'pointer',
+    borderBottom: '1px dotted #4a5a3a',
+    color: '#a8b888',
+  }
 
   return (
     <div style={{ minHeight: '100vh', backgroundColor: '#0f1410', color: '#e8ead5', fontFamily: "'Georgia', serif" }}
@@ -397,7 +409,7 @@ export default function Home() {
                 return (
                   <React.Fragment key={label}>
                     <tr onClick={() => toggleSection(label)}>
-                      <td colSpan={13} style={sectionHeaderStyle(label)}>
+                      <td colSpan={13} style={sectionHeaderStyle}>
                         <span style={{ fontSize: '12px' }}>{collapsed ? '▶' : '▼'}</span>
                         {label}
                         <span style={{ fontSize: '10px', color: '#4a5a3a', marginLeft: '4px' }}>({sectionFields.length} fields)</span>
@@ -406,7 +418,13 @@ export default function Home() {
                     {!collapsed && sectionFields.map((field, fi) => (
                       <tr key={field.id} style={{ backgroundColor: fi % 2 === 0 ? '#111612' : '#0f1410' }}>
                         <td style={{ padding: '6px 12px', fontSize: '12px', color: '#a8b888', borderBottom: '1px solid #1a2016', whiteSpace: 'nowrap', position: 'sticky', left: 0, backgroundColor: fi % 2 === 0 ? '#111612' : '#0f1410' }}>
-                          {field.name}
+                          <span
+                            onClick={e => { e.stopPropagation(); goToFieldOnMap(field.id) }}
+                            style={fieldNameStyle}
+                            title="View on heat map"
+                          >
+                            {field.name}
+                          </span>
                           {field.acres && <span style={{ fontSize: '10px', color: '#4a5a3a', marginLeft: '6px' }}>{field.acres}ac</span>}
                         </td>
                         {MONTHS.map((m, mi) => {
@@ -455,8 +473,13 @@ export default function Home() {
                 {item.label}
               </div>
             ))}
+            {focusFieldId && (
+              <button onClick={() => setFocusFieldId(null)} style={{ marginLeft: 'auto', padding: '4px 10px', background: 'none', border: '1px solid #2a3020', color: '#6b7a5a', borderRadius: '4px', cursor: 'pointer', fontSize: '11px' }}>
+                Reset view
+              </button>
+            )}
           </div>
-          <FieldMap fields={fieldsWithHeat} />
+          <FieldMap fields={fieldsWithHeat} focusFieldId={focusFieldId} />
         </div>
       )}
 
@@ -487,7 +510,7 @@ export default function Home() {
                 return (
                   <React.Fragment key={label}>
                     <tr onClick={() => toggleSection(label)}>
-                      <td colSpan={daysInMonth + 1} style={sectionHeaderStyle(label)}>
+                      <td colSpan={daysInMonth + 1} style={sectionHeaderStyle}>
                         <span style={{ fontSize: '12px' }}>{collapsed ? '▶' : '▼'}</span>
                         {label}
                         <span style={{ fontSize: '10px', color: '#4a5a3a', marginLeft: '4px' }}>({sectionFields.length} fields)</span>
@@ -496,7 +519,13 @@ export default function Home() {
                     {!collapsed && sectionFields.map((field, fi) => (
                       <tr key={field.id} style={{ backgroundColor: fi % 2 === 0 ? '#111612' : '#0f1410' }}>
                         <td style={{ padding: '6px 12px', fontSize: '13px', color: '#a8b888', borderBottom: '1px solid #1a2016', whiteSpace: 'nowrap', position: 'sticky', left: 0, backgroundColor: fi % 2 === 0 ? '#111612' : '#0f1410' }}>
-                          {field.name}
+                          <span
+                            onClick={e => { e.stopPropagation(); goToFieldOnMap(field.id) }}
+                            style={fieldNameStyle}
+                            title="View on heat map"
+                          >
+                            {field.name}
+                          </span>
                           {field.acres && <span style={{ fontSize: '10px', color: '#4a5a3a', marginLeft: '6px' }}>{field.acres}ac</span>}
                         </td>
                         {days.map(day => {
