@@ -18,6 +18,7 @@ const supabase = createBrowserClient(
 type Field = {
   id: string; name: string; acres: number | null; region: string | null;
   boundary: object | null; client: string | null; cert_status: string | null;
+  cert_notes: string | null; cert_transition_start: string | null; cert_expiry: string | null;
 }
 type OperationType = { id: string; name: string; color: string }
 type Operation = {
@@ -42,12 +43,28 @@ const SECTIONS = [
   { label: 'LB Pork', filter: (f: Field) => f.client === 'LB Pork' },
 ]
 
+const CERT_GROUPS = [
+  { label: 'Certified Organic', key: 'Certified', color: '#4aaa4a', badge: 'O' },
+  { label: 'Transition 2', key: 'Transition 2', color: '#aaaa00', badge: 'T2' },
+  { label: 'Transition 1', key: 'Transition 1', color: '#cc8800', badge: 'T1' },
+  { label: 'Conventional', key: 'Conventional', color: '#6b7a5a', badge: 'CONV' },
+]
+
 function certBadge(status: string | null) {
   switch (status) {
     case 'Certified':    return 'O'
     case 'Transition 2': return 'T2'
     case 'Transition 1': return 'T1'
     default:             return 'CONV'
+  }
+}
+
+function certColor(status: string | null) {
+  switch (status) {
+    case 'Certified':    return '#4aaa4a'
+    case 'Transition 2': return '#aaaa00'
+    case 'Transition 1': return '#cc8800'
+    default:             return '#6b7a5a'
   }
 }
 
@@ -79,7 +96,7 @@ export default function Home() {
   const [allOps, setAllOps] = useState<Operation[]>([])
   const [opTypes, setOpTypes] = useState<OperationType[]>([])
   const [loading, setLoading] = useState(true)
-  const [view, setView] = useState<'calendar' | 'year' | 'map' | 'log'>('calendar')
+  const [view, setView] = useState<'calendar' | 'year' | 'map' | 'log' | 'cert'>('calendar')
   const [mapMode, setMapMode] = useState<'work' | 'daily'>('work')
   const [showModal, setShowModal] = useState(false)
   const [editOp, setEditOp] = useState<Operation | null>(null)
@@ -88,6 +105,9 @@ export default function Home() {
   const [isMobile, setIsMobile] = useState(false)
   const [collapsedSections, setCollapsedSections] = useState<Record<string, boolean>>({})
   const [focusFieldId, setFocusFieldId] = useState<string | null>(null)
+  const [editingField, setEditingField] = useState<Field | null>(null)
+  const [certEdit, setCertEdit] = useState<{ status: string, transition_start: string, expiry: string, notes: string }>({ status: '', transition_start: '', expiry: '', notes: '' })
+  const [savingCert, setSavingCert] = useState(false)
 
   const today = now.getDate()
   const currentMonth = now.getMonth()
@@ -103,6 +123,32 @@ export default function Home() {
   function goToFieldOnMap(fieldId: string) {
     setFocusFieldId(fieldId)
     setView('map')
+  }
+
+  function openCertEdit(field: Field) {
+    setEditingField(field)
+    setCertEdit({
+      status: field.cert_status || 'Conventional',
+      transition_start: field.cert_transition_start || '',
+      expiry: field.cert_expiry || '',
+      notes: field.cert_notes || ''
+    })
+  }
+
+  async function saveCert() {
+    if (!editingField) return
+    setSavingCert(true)
+    await supabase.from('fields').update({
+      cert_status: certEdit.status,
+      cert_transition_start: certEdit.transition_start || null,
+      cert_expiry: certEdit.expiry || null,
+      cert_notes: certEdit.notes || null
+    }).eq('id', editingField.id)
+    setSavingCert(false)
+    setEditingField(null)
+    if (view === 'year') loadYearData()
+    else if (view === 'cert') loadData()
+    else loadData()
   }
 
   useEffect(() => {
@@ -265,23 +311,15 @@ export default function Home() {
     const fieldOps = allOps
       .filter(op => op.field_id === f.id && op.date >= `${currentYear}-01-01`)
       .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
-
     const latest = fieldOps[0]
     const daysSinceWork = latest ? daysSince(latest.date) : undefined
-
     const lastSeeding = fieldOps.find(op => op.operation_types?.name === 'Seeding')
     const lastHarvest = fieldOps.find(op => op.operation_types?.name === 'Harvest')
-
-    const isInCrop = lastSeeding ? (
-      !lastHarvest || new Date(lastSeeding.date) > new Date(lastHarvest.date)
-    ) : false
-
+    const isInCrop = lastSeeding ? (!lastHarvest || new Date(lastSeeding.date) > new Date(lastHarvest.date)) : false
     return { ...f, daysSinceWork, isInCrop }
   })
 
-  const heatMapFields = mapMode === 'daily'
-    ? fieldsWithHeat.filter(f => f.isInCrop)
-    : fieldsWithHeat
+  const heatMapFields = mapMode === 'daily' ? fieldsWithHeat.filter(f => f.isInCrop) : fieldsWithHeat
 
   const onSaved = () => {
     setShowModal(false)
@@ -292,34 +330,18 @@ export default function Home() {
   }
 
   const sectionHeaderStyle = {
-    padding: '6px 12px',
-    fontSize: '10px',
-    letterSpacing: '0.15em',
-    textTransform: 'uppercase' as const,
-    color: '#8a9a6a',
-    backgroundColor: '#0a0f0b',
-    borderBottom: '1px solid #2a3020',
-    cursor: 'pointer',
-    userSelect: 'none' as const,
-    display: 'flex',
-    alignItems: 'center',
-    gap: '8px'
+    padding: '6px 12px', fontSize: '10px', letterSpacing: '0.15em',
+    textTransform: 'uppercase' as const, color: '#8a9a6a', backgroundColor: '#0a0f0b',
+    borderBottom: '1px solid #2a3020', cursor: 'pointer', userSelect: 'none' as const,
+    display: 'flex', alignItems: 'center', gap: '8px'
   }
 
-  const fieldNameStyle = {
-    cursor: 'pointer',
-    borderBottom: '1px dotted #4a5a3a',
-    color: '#a8b888',
-  }
+  const fieldNameStyle = { cursor: 'pointer', borderBottom: '1px dotted #4a5a3a', color: '#a8b888' }
 
   function FieldNameCell({ field }: { field: Field }) {
     return (
       <>
-        <span
-          onClick={e => { e.stopPropagation(); goToFieldOnMap(field.id) }}
-          style={fieldNameStyle}
-          title="View on heat map"
-        >
+        <span onClick={e => { e.stopPropagation(); goToFieldOnMap(field.id) }} style={fieldNameStyle} title="View on heat map">
           {field.name}
         </span>
         <span style={{ fontSize: '9px', color: '#6b7a5a', marginLeft: '5px' }}>
@@ -329,6 +351,13 @@ export default function Home() {
       </>
     )
   }
+
+  // Cert summary totals
+  const certTotals = CERT_GROUPS.map(g => {
+    const groupFields = fields.filter(f => (f.cert_status || 'Conventional') === g.key && f.client !== 'LB Pork')
+    const totalAcres = groupFields.reduce((sum, f) => sum + (f.acres || 0), 0)
+    return { ...g, count: groupFields.length, totalAcres }
+  })
 
   return (
     <div style={{ minHeight: '100vh', backgroundColor: '#0f1410', color: '#e8ead5', fontFamily: "'Georgia', serif" }}
@@ -365,6 +394,7 @@ export default function Home() {
             <button onClick={() => setView('calendar')} style={{ padding: '6px 14px', cursor: 'pointer', fontSize: '12px', border: 'none', backgroundColor: view === 'calendar' ? '#2a3020' : 'transparent', color: view === 'calendar' ? '#c8d4a0' : '#6b7a5a' }}>Month</button>
             <button onClick={() => setView('year')} style={{ padding: '6px 14px', cursor: 'pointer', fontSize: '12px', border: 'none', backgroundColor: view === 'year' ? '#2a3020' : 'transparent', color: view === 'year' ? '#c8d4a0' : '#6b7a5a' }}>Year</button>
             <button onClick={() => setView('map')} style={{ padding: '6px 14px', cursor: 'pointer', fontSize: '12px', border: 'none', backgroundColor: view === 'map' ? '#2a3020' : 'transparent', color: view === 'map' ? '#c8d4a0' : '#6b7a5a' }}>Map</button>
+            <button onClick={() => setView('cert')} style={{ padding: '6px 14px', cursor: 'pointer', fontSize: '12px', border: 'none', backgroundColor: view === 'cert' ? '#2a3020' : 'transparent', color: view === 'cert' ? '#c8d4a0' : '#6b7a5a' }}>Cert</button>
           </div>
           {!isMobile && (
             <div style={{ marginLeft: 'auto', display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
@@ -388,7 +418,7 @@ export default function Home() {
       )}
 
       {/* Stats Bar */}
-      {!loading && acresSummary.length > 0 && view !== 'log' && (
+      {!loading && acresSummary.length > 0 && view !== 'log' && view !== 'cert' && (
         <div style={{ padding: isMobile ? '10px 16px' : '12px 32px', borderBottom: '1px solid #2a3020', display: 'flex', gap: '16px', alignItems: 'center', flexWrap: 'wrap', backgroundColor: '#0c1410' }}>
           {!isMobile && <div style={{ fontSize: '11px', letterSpacing: '0.15em', textTransform: 'uppercase', color: '#4a5a3a' }}>{view === 'year' ? `${year}` : monthName}</div>}
           <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap', alignItems: 'center' }}>
@@ -407,7 +437,7 @@ export default function Home() {
       )}
 
       {/* Nav */}
-      {view !== 'log' && view !== 'map' && (
+      {view !== 'log' && view !== 'map' && view !== 'cert' && (
         <div style={{ padding: isMobile ? '12px 16px' : '16px 32px', display: 'flex', alignItems: 'center', gap: '12px' }}>
           {view === 'year' ? (
             <>
@@ -426,6 +456,79 @@ export default function Home() {
       )}
 
       {loading && <div style={{ padding: '40px 16px', color: '#6b7a5a', fontSize: '14px', textAlign: 'center' }}>Loading field data...</div>}
+
+      {/* Cert View */}
+      {!loading && view === 'cert' && (
+        <div style={{ padding: isMobile ? '16px' : '24px 32px' }}>
+
+          {/* Summary cards */}
+          <div style={{ display: 'flex', gap: '12px', marginBottom: '32px', flexWrap: 'wrap' }}>
+            {certTotals.map(g => (
+              <div key={g.key} style={{ backgroundColor: '#111612', border: `1px solid ${g.color}44`, borderRadius: '8px', padding: '16px 20px', minWidth: '160px', flex: '1' }}>
+                <div style={{ fontSize: '10px', letterSpacing: '0.15em', textTransform: 'uppercase', color: g.color, marginBottom: '8px' }}>{g.badge} — {g.label}</div>
+                <div style={{ fontSize: '24px', color: '#c8d4a0', fontWeight: 'normal' }}>{g.count}</div>
+                <div style={{ fontSize: '12px', color: '#6b7a5a' }}>fields</div>
+                <div style={{ fontSize: '14px', color: '#a8b888', marginTop: '4px' }}>{g.totalAcres.toLocaleString('en-US', { maximumFractionDigits: 0 })} ac</div>
+              </div>
+            ))}
+          </div>
+
+          {/* Field list by cert group */}
+          {CERT_GROUPS.map(g => {
+            const groupFields = fields
+              .filter(f => (f.cert_status || 'Conventional') === g.key)
+              .sort((a, b) => (a.name || '').localeCompare(b.name || ''))
+            if (groupFields.length === 0) return null
+            return (
+              <div key={g.key} style={{ marginBottom: '32px' }}>
+                <div style={{ fontSize: '11px', letterSpacing: '0.15em', textTransform: 'uppercase', color: g.color, marginBottom: '12px', borderBottom: `1px solid ${g.color}33`, paddingBottom: '8px' }}>
+                  {g.badge} — {g.label} ({groupFields.length} fields)
+                </div>
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <thead>
+                    <tr>
+                      <th style={{ textAlign: 'left', padding: '6px 12px', fontSize: '10px', color: '#4a5a3a', letterSpacing: '0.1em', textTransform: 'uppercase', borderBottom: '1px solid #1a2016' }}>Field</th>
+                      <th style={{ textAlign: 'left', padding: '6px 12px', fontSize: '10px', color: '#4a5a3a', letterSpacing: '0.1em', textTransform: 'uppercase', borderBottom: '1px solid #1a2016' }}>Client</th>
+                      <th style={{ textAlign: 'right', padding: '6px 12px', fontSize: '10px', color: '#4a5a3a', letterSpacing: '0.1em', textTransform: 'uppercase', borderBottom: '1px solid #1a2016' }}>Acres</th>
+                      <th style={{ textAlign: 'left', padding: '6px 12px', fontSize: '10px', color: '#4a5a3a', letterSpacing: '0.1em', textTransform: 'uppercase', borderBottom: '1px solid #1a2016' }}>Trans. Start</th>
+                      <th style={{ textAlign: 'left', padding: '6px 12px', fontSize: '10px', color: '#4a5a3a', letterSpacing: '0.1em', textTransform: 'uppercase', borderBottom: '1px solid #1a2016' }}>Cert Expiry</th>
+                      <th style={{ textAlign: 'left', padding: '6px 12px', fontSize: '10px', color: '#4a5a3a', letterSpacing: '0.1em', textTransform: 'uppercase', borderBottom: '1px solid #1a2016' }}>Notes</th>
+                      <th style={{ padding: '6px 12px', borderBottom: '1px solid #1a2016' }}></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {groupFields.map((field, fi) => (
+                      <tr key={field.id} style={{ backgroundColor: fi % 2 === 0 ? '#111612' : '#0f1410' }}>
+                        <td style={{ padding: '8px 12px', fontSize: '13px', color: '#a8b888', borderBottom: '1px solid #1a2016' }}>
+                          <span onClick={() => goToFieldOnMap(field.id)} style={{ cursor: 'pointer', borderBottom: '1px dotted #4a5a3a' }}>{field.name}</span>
+                        </td>
+                        <td style={{ padding: '8px 12px', fontSize: '12px', color: '#6b7a5a', borderBottom: '1px solid #1a2016' }}>{field.client || 'Ufer Farms'}</td>
+                        <td style={{ padding: '8px 12px', fontSize: '12px', color: '#6b7a5a', borderBottom: '1px solid #1a2016', textAlign: 'right' }}>{field.acres || '—'}</td>
+                        <td style={{ padding: '8px 12px', fontSize: '12px', color: '#6b7a5a', borderBottom: '1px solid #1a2016' }}>
+                          {field.cert_transition_start ? new Date(field.cert_transition_start + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'}
+                        </td>
+                        <td style={{ padding: '8px 12px', fontSize: '12px', borderBottom: '1px solid #1a2016' }}>
+                          {field.cert_expiry ? (
+                            <span style={{ color: new Date(field.cert_expiry) < new Date() ? '#ff6b6b' : '#a8b888' }}>
+                              {new Date(field.cert_expiry + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                            </span>
+                          ) : '—'}
+                        </td>
+                        <td style={{ padding: '8px 12px', fontSize: '11px', color: '#6b7a5a', borderBottom: '1px solid #1a2016', fontStyle: 'italic', maxWidth: '200px' }}>
+                          {field.cert_notes || '—'}
+                        </td>
+                        <td style={{ padding: '8px 12px', borderBottom: '1px solid #1a2016' }}>
+                          <button onClick={() => openCertEdit(field)} style={{ padding: '4px 10px', background: 'none', border: '1px solid #2a3020', color: '#6b7a5a', borderRadius: '4px', cursor: 'pointer', fontSize: '11px' }}>Edit</button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )
+          })}
+        </div>
+      )}
 
       {/* Recent Log View */}
       {!loading && view === 'log' && (
@@ -495,8 +598,7 @@ export default function Home() {
                             <td key={m} style={{ padding: '4px 2px', textAlign: 'center', borderBottom: '1px solid #1a2016', borderLeft: isCurrentMonth ? '2px solid #c8d4a020' : undefined, minWidth: '48px' }}>
                               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '2px', justifyContent: 'center' }}>
                                 {monthOps.map(op => (
-                                  <div key={op.id}
-                                    onClick={e => { e.stopPropagation(); setSelectedOp({ op, fieldName: field.name }) }}
+                                  <div key={op.id} onClick={e => { e.stopPropagation(); setSelectedOp({ op, fieldName: field.name }) }}
                                     title={`${op.operation_types?.name} — ${new Date(op.date + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`}
                                     style={{ width: '10px', height: '10px', borderRadius: '2px', backgroundColor: op.operation_types?.color || '#666', cursor: 'pointer', flexShrink: 0 }}
                                   />
@@ -526,14 +628,10 @@ export default function Home() {
             {mapMode === 'work' ? (
               <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
                 {[
-                  { label: 'Today', color: '#0000ff' },
-                  { label: '1-6d', color: '#0033ff' },
-                  { label: '7-12d', color: '#0099ff' },
-                  { label: '13-21d', color: '#00bb88' },
-                  { label: '22-30d', color: '#446611' },
-                  { label: '31-39d', color: '#aa3300' },
-                  { label: '40+d', color: '#ff0000' },
-                  { label: 'Never', color: '#1a0000' },
+                  { label: 'Today', color: '#0000ff' }, { label: '1-6d', color: '#0033ff' },
+                  { label: '7-12d', color: '#0099ff' }, { label: '13-21d', color: '#00bb88' },
+                  { label: '22-30d', color: '#446611' }, { label: '31-39d', color: '#aa3300' },
+                  { label: '40+d', color: '#ff0000' }, { label: 'Never', color: '#1a0000' },
                 ].map(item => (
                   <div key={item.label} style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px', color: '#8a9a6a' }}>
                     <div style={{ width: '10px', height: '10px', borderRadius: '2px', backgroundColor: item.color }} />
@@ -544,23 +642,17 @@ export default function Home() {
             ) : (
               <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
                 {[
-                  { label: 'Today', color: '#4B0082' },
-                  { label: '1 day', color: '#0000ff' },
-                  { label: '2 days', color: '#008000' },
-                  { label: '3 days', color: '#ffff00' },
-                  { label: '4 days', color: '#ffa500' },
-                  { label: '5 days', color: '#ff6600' },
-                  { label: '6 days', color: '#ff3300' },
-                  { label: '7+ days', color: '#ff0000' },
+                  { label: 'Today', color: '#4B0082' }, { label: '1 day', color: '#0000ff' },
+                  { label: '2 days', color: '#008000' }, { label: '3 days', color: '#ffff00' },
+                  { label: '4 days', color: '#ffa500' }, { label: '5 days', color: '#ff6600' },
+                  { label: '6 days', color: '#ff3300' }, { label: '7+ days', color: '#ff0000' },
                 ].map(item => (
                   <div key={item.label} style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px', color: '#8a9a6a' }}>
                     <div style={{ width: '10px', height: '10px', borderRadius: '2px', backgroundColor: item.color }} />
                     {item.label}
                   </div>
                 ))}
-                <span style={{ fontSize: '11px', color: '#4a5a3a', marginLeft: '4px' }}>
-                  — {heatMapFields.filter(f => f.isInCrop).length} fields in crop
-                </span>
+                <span style={{ fontSize: '11px', color: '#4a5a3a', marginLeft: '4px' }}>— {heatMapFields.filter(f => f.isInCrop).length} fields in crop</span>
               </div>
             )}
             {focusFieldId && (
@@ -648,6 +740,49 @@ export default function Home() {
             <button onClick={() => { setEditOp(selectedOp.op); setSelectedOp(null) }} style={{ padding: '7px 14px', backgroundColor: '#1a2a3a', border: 'none', color: '#aac8ff', borderRadius: '4px', cursor: 'pointer', fontSize: '13px' }}>Edit</button>
             <button onClick={handleDelete} disabled={deleting} style={{ padding: '7px 14px', backgroundColor: '#6b1a1a', border: 'none', color: '#ffaaaa', borderRadius: '4px', cursor: 'pointer', fontSize: '13px' }}>{deleting ? '...' : 'Delete'}</button>
             <button onClick={() => setSelectedOp(null)} style={{ padding: '7px 14px', background: 'none', border: '1px solid #2a3020', color: '#6b7a5a', borderRadius: '4px', cursor: 'pointer', fontSize: '13px' }}>Cancel</button>
+          </div>
+        </div>
+      )}
+
+      {/* Cert Edit Modal */}
+      {editingField && (
+        <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+          <div style={{ backgroundColor: '#111612', border: '1px solid #2a3020', borderRadius: '8px', padding: '32px', width: '480px', maxWidth: '90vw' }}>
+            <h2 style={{ margin: '0 0 20px', fontSize: '18px', fontWeight: 'normal', color: '#c8d4a0', fontFamily: 'Georgia, serif' }}>
+              Edit Certification — {editingField.name}
+            </h2>
+
+            <div style={{ marginBottom: '16px' }}>
+              <label style={{ display: 'block', fontSize: '11px', letterSpacing: '0.15em', textTransform: 'uppercase', color: '#6b7a5a', marginBottom: '8px' }}>Status</label>
+              <select value={certEdit.status} onChange={e => setCertEdit(p => ({ ...p, status: e.target.value }))} style={{ width: '100%', padding: '8px 12px', backgroundColor: '#0f1410', border: '1px solid #2a3020', color: '#e8ead5', borderRadius: '4px', fontSize: '14px' }}>
+                <option value="Certified">Certified Organic</option>
+                <option value="Transition 2">Transition 2</option>
+                <option value="Transition 1">Transition 1</option>
+                <option value="Conventional">Conventional</option>
+              </select>
+            </div>
+
+            <div style={{ marginBottom: '16px' }}>
+              <label style={{ display: 'block', fontSize: '11px', letterSpacing: '0.15em', textTransform: 'uppercase', color: '#6b7a5a', marginBottom: '8px' }}>Transition Start Date</label>
+              <input type="date" value={certEdit.transition_start} onChange={e => setCertEdit(p => ({ ...p, transition_start: e.target.value }))} style={{ width: '100%', padding: '8px 12px', backgroundColor: '#0f1410', border: '1px solid #2a3020', color: '#e8ead5', borderRadius: '4px', fontSize: '14px', boxSizing: 'border-box' as const }} />
+            </div>
+
+            <div style={{ marginBottom: '16px' }}>
+              <label style={{ display: 'block', fontSize: '11px', letterSpacing: '0.15em', textTransform: 'uppercase', color: '#6b7a5a', marginBottom: '8px' }}>Certification Expiry Date</label>
+              <input type="date" value={certEdit.expiry} onChange={e => setCertEdit(p => ({ ...p, expiry: e.target.value }))} style={{ width: '100%', padding: '8px 12px', backgroundColor: '#0f1410', border: '1px solid #2a3020', color: '#e8ead5', borderRadius: '4px', fontSize: '14px', boxSizing: 'border-box' as const }} />
+            </div>
+
+            <div style={{ marginBottom: '24px' }}>
+              <label style={{ display: 'block', fontSize: '11px', letterSpacing: '0.15em', textTransform: 'uppercase', color: '#6b7a5a', marginBottom: '8px' }}>Notes</label>
+              <textarea value={certEdit.notes} onChange={e => setCertEdit(p => ({ ...p, notes: e.target.value }))} rows={3} style={{ width: '100%', padding: '8px 12px', backgroundColor: '#0f1410', border: '1px solid #2a3020', color: '#e8ead5', borderRadius: '4px', fontSize: '14px', resize: 'vertical', boxSizing: 'border-box' as const, fontFamily: 'Georgia, serif' }} placeholder="e.g. West half Certified, East quarter T2" />
+            </div>
+
+            <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
+              <button onClick={() => setEditingField(null)} style={{ padding: '8px 20px', background: 'none', border: '1px solid #2a3020', color: '#6b7a5a', borderRadius: '4px', cursor: 'pointer', fontSize: '14px' }}>Cancel</button>
+              <button onClick={saveCert} disabled={savingCert} style={{ padding: '8px 20px', backgroundColor: '#2d6a2d', border: 'none', color: '#fff', borderRadius: '4px', cursor: 'pointer', fontSize: '14px' }}>
+                {savingCert ? 'Saving...' : 'Save'}
+              </button>
+            </div>
           </div>
         </div>
       )}
