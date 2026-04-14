@@ -13,14 +13,16 @@ type Field = {
   region: string | null
   boundary: object | null
   daysSinceWork?: number
-  daysSinceSeeding?: number
   isInCrop?: boolean
+  lastOpType?: string
+  cumulativeGDU?: number
+  cumulativeRainfall?: number
+  gduSinceLastWork?: number
 }
 
-// Reversed: recent = cold blue, old = hot red
 function getWorkHeatColor(days: number | undefined): string {
-  if (days === undefined || days === null) return '#1a0000' // never worked - dark red
-  if (days === 0)  return '#0000ff' // today - pure blue
+  if (days === undefined || days === null) return '#1a0000'
+  if (days === 0)  return '#0000ff'
   if (days <= 3)   return '#0011ff'
   if (days <= 6)   return '#0033ff'
   if (days <= 9)   return '#0066ff'
@@ -38,20 +40,19 @@ function getWorkHeatColor(days: number | undefined): string {
   if (days <= 45)  return '#dd1100'
   if (days <= 48)  return '#ee0800'
   if (days <= 51)  return '#ff0500'
-  return '#ff0000' // 52+ days - hot red
+  return '#ff0000'
 }
 
-// Daily activity: today = blue, 7+ days = red
 function getDailyActivityColor(days: number | undefined): string {
   if (days === undefined || days === null) return '#2a0000'
-  if (days === 0) return '#4B0082' // Indigo
-  if (days === 1) return '#0000ff' // Blue
-  if (days === 2) return '#008000' // Green
-  if (days === 3) return '#ffff00' // Yellow
-  if (days === 4) return '#ffa500' // Yellow Orange
-  if (days === 5) return '#ff6600' // Orange
-  if (days === 6) return '#ff3300' // Red Orange
-  return '#ff0000'                  // 7+ days - Red
+  if (days === 0) return '#4B0082'
+  if (days === 1) return '#0000ff'
+  if (days === 2) return '#008000'
+  if (days === 3) return '#ffff00'
+  if (days === 4) return '#ffa500'
+  if (days === 5) return '#ff6600'
+  if (days === 6) return '#ff3300'
+  return '#ff0000'
 }
 
 export default function FieldMap({
@@ -68,7 +69,6 @@ export default function FieldMap({
   const mapLoaded = useRef(false)
 
   const getColor = mode === 'daily' ? getDailyActivityColor : getWorkHeatColor
-  const daysField = mode === 'daily' ? 'daysSinceWork' : 'daysSinceWork'
 
   useEffect(() => {
     if (map.current || !mapContainer.current) return
@@ -93,9 +93,12 @@ export default function FieldMap({
               id: f.id,
               name: f.name,
               acres: f.acres,
-              color: getColor(f[daysField]),
+              color: getColor(f.daysSinceWork),
               daysSinceWork: f.daysSinceWork ?? -1,
-              isInCrop: f.isInCrop ? 1 : 0
+              lastOpType: f.lastOpType || '',
+              cumulativeGDU: f.cumulativeGDU ?? -1,
+              cumulativeRainfall: f.cumulativeRainfall ?? -1,
+              gduSinceLastWork: f.gduSinceLastWork ?? -1,
             },
             geometry: f.boundary as GeoJSON.Geometry
           }))
@@ -107,21 +110,14 @@ export default function FieldMap({
         id: 'fields-fill',
         type: 'fill',
         source: 'fields',
-        paint: {
-          'fill-color': ['get', 'color'],
-          'fill-opacity': 0.75
-        }
+        paint: { 'fill-color': ['get', 'color'], 'fill-opacity': 0.75 }
       })
 
       map.current!.addLayer({
         id: 'fields-outline',
         type: 'line',
         source: 'fields',
-        paint: {
-          'line-color': '#c8d4a0',
-          'line-width': 1,
-          'line-opacity': 0.4
-        }
+        paint: { 'line-color': '#c8d4a0', 'line-width': 1, 'line-opacity': 0.4 }
       })
 
       map.current!.addLayer({
@@ -138,31 +134,42 @@ export default function FieldMap({
       map.current!.on('click', 'fields-fill', (e) => {
         const props = e.features?.[0]?.properties
         if (!props) return
-        const days = props.daysSinceWork === -1 ? 'Never worked' : `${props.daysSinceWork} days ago`
-        new mapboxgl.Popup()
+
+        const days = props.daysSinceWork === -1 ? 'Never worked' : `${props.daysSinceWork} day${props.daysSinceWork === 1 ? '' : 's'} ago`
+        const lastOp = props.lastOpType ? `<div style="color:#8a9a6a;font-size:12px;margin-top:2px">${props.lastOpType}</div>` : ''
+        const gduTotal = props.cumulativeGDU > 0 ? `<div style="margin-top:6px;font-size:12px;color:#c8d4a0">GDU since planting: <strong>${props.cumulativeGDU}</strong></div>` : ''
+        const rainTotal = props.cumulativeRainfall > 0 ? `<div style="font-size:12px;color:#c8d4a0">Rain since planting: <strong>${props.cumulativeRainfall}"</strong></div>` : ''
+        const gduSinceWork = props.gduSinceLastWork > 0 ? `<div style="font-size:12px;color:#8a9a6a;margin-top:4px">GDU since last worked: <strong style="color:#c8d4a0">${props.gduSinceLastWork}</strong></div>` : ''
+
+        new mapboxgl.Popup({ maxWidth: '260px' })
           .setLngLat(e.lngLat)
-          .setHTML(`<strong>${props.name}</strong><br/>${props.acres ? props.acres + 'ac' : ''}<br/>Last worked: ${days}`)
+          .setHTML(`
+            <div style="font-family:Georgia,serif;padding:4px">
+              <div style="font-size:14px;font-weight:bold;color:#c8d4a0;margin-bottom:4px">${props.name}</div>
+              <div style="font-size:12px;color:#6b7a5a">${props.acres ? props.acres + 'ac · ' : ''}Last worked: ${days}</div>
+              ${lastOp}
+              ${gduTotal}
+              ${rainTotal}
+              ${gduSinceWork}
+            </div>
+          `)
           .addTo(map.current!)
       })
 
-      map.current!.on('mouseenter', 'fields-fill', () => {
-        map.current!.getCanvas().style.cursor = 'pointer'
-      })
-      map.current!.on('mouseleave', 'fields-fill', () => {
-        map.current!.getCanvas().style.cursor = ''
-      })
+      map.current!.on('mouseenter', 'fields-fill', () => { map.current!.getCanvas().style.cursor = 'pointer' })
+      map.current!.on('mouseleave', 'fields-fill', () => { map.current!.getCanvas().style.cursor = '' })
 
       if (focusFieldId) focusOnField(focusFieldId)
     })
   }, [])
 
-  // Update colors when mode changes
+  // Update colors and data when mode or fields change
   useEffect(() => {
     if (!map.current || !mapLoaded.current) return
     const source = map.current.getSource('fields') as mapboxgl.GeoJSONSource
     if (!source) return
 
-    const geojson: GeoJSON.FeatureCollection = {
+    source.setData({
       type: 'FeatureCollection',
       features: fields
         .filter(f => f.boundary)
@@ -174,12 +181,14 @@ export default function FieldMap({
             acres: f.acres,
             color: getColor(f.daysSinceWork),
             daysSinceWork: f.daysSinceWork ?? -1,
-            isInCrop: f.isInCrop ? 1 : 0
+            lastOpType: f.lastOpType || '',
+            cumulativeGDU: f.cumulativeGDU ?? -1,
+            cumulativeRainfall: f.cumulativeRainfall ?? -1,
+            gduSinceLastWork: f.gduSinceLastWork ?? -1,
           },
           geometry: f.boundary as GeoJSON.Geometry
         }))
-    }
-    source.setData(geojson)
+    })
   }, [mode, fields])
 
   useEffect(() => {
@@ -206,35 +215,41 @@ export default function FieldMap({
     const coords: number[][] = []
 
     function extractCoords(g: GeoJSON.Geometry) {
-      if (g.type === 'Polygon') {
-        g.coordinates[0].forEach(c => coords.push(c as number[]))
-      } else if (g.type === 'MultiPolygon') {
-        g.coordinates.forEach(poly => poly[0].forEach(c => coords.push(c as number[])))
-      }
+      if (g.type === 'Polygon') g.coordinates[0].forEach(c => coords.push(c as number[]))
+      else if (g.type === 'MultiPolygon') g.coordinates.forEach(poly => poly[0].forEach(c => coords.push(c as number[])))
     }
     extractCoords(geom)
     if (coords.length === 0) return
 
     const lngs = coords.map(c => c[0])
     const lats = coords.map(c => c[1])
-    const bounds = new mapboxgl.LngLatBounds(
-      [Math.min(...lngs), Math.min(...lats)],
-      [Math.max(...lngs), Math.max(...lats)]
+    map.current.fitBounds(
+      new mapboxgl.LngLatBounds([Math.min(...lngs), Math.min(...lats)], [Math.max(...lngs), Math.max(...lats)]),
+      { padding: 80, duration: 1200 }
     )
-
-    map.current.fitBounds(bounds, { padding: 80, duration: 1200 })
 
     const centerLng = (Math.min(...lngs) + Math.max(...lngs)) / 2
     const centerLat = (Math.min(...lats) + Math.max(...lats)) / 2
     const days = field.daysSinceWork === undefined ? 'Never worked' : `${field.daysSinceWork} days ago`
+    const lastOp = field.lastOpType ? `<div style="color:#8a9a6a;font-size:12px;margin-top:2px">${field.lastOpType}</div>` : ''
+    const gduTotal = field.cumulativeGDU && field.cumulativeGDU > 0 ? `<div style="margin-top:6px;font-size:12px;color:#c8d4a0">GDU since planting: <strong>${field.cumulativeGDU}</strong></div>` : ''
+    const rainTotal = field.cumulativeRainfall && field.cumulativeRainfall > 0 ? `<div style="font-size:12px;color:#c8d4a0">Rain since planting: <strong>${field.cumulativeRainfall}"</strong></div>` : ''
+    const gduSinceWork = field.gduSinceLastWork && field.gduSinceLastWork > 0 ? `<div style="font-size:12px;color:#8a9a6a;margin-top:4px">GDU since last worked: <strong style="color:#c8d4a0">${field.gduSinceLastWork}</strong></div>` : ''
 
-    new mapboxgl.Popup({ closeOnClick: true })
+    new mapboxgl.Popup({ closeOnClick: true, maxWidth: '260px' })
       .setLngLat([centerLng, centerLat])
-      .setHTML(`<strong>${field.name}</strong><br/>${field.acres ? field.acres + 'ac' : ''}<br/>Last worked: ${days}`)
+      .setHTML(`
+        <div style="font-family:Georgia,serif;padding:4px">
+          <div style="font-size:14px;font-weight:bold;color:#c8d4a0;margin-bottom:4px">${field.name}</div>
+          <div style="font-size:12px;color:#6b7a5a">${field.acres ? field.acres + 'ac · ' : ''}Last worked: ${days}</div>
+          ${lastOp}
+          ${gduTotal}
+          ${rainTotal}
+          ${gduSinceWork}
+        </div>
+      `)
       .addTo(map.current)
   }
 
-  return (
-    <div ref={mapContainer} style={{ width: '100%', height: '600px', borderRadius: '4px' }} />
-  )
+  return <div ref={mapContainer} style={{ width: '100%', height: '600px', borderRadius: '4px' }} />
 }
