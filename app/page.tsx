@@ -23,7 +23,7 @@ type Field = {
 type OperationType = { id: string; name: string; color: string }
 type Operation = {
   id: string; date: string; field_id: string; operation_type_id: string;
-  notes: string; source: string;
+  notes: string; source: string; crop_type: string | null; hidden?: boolean;
   fields: { name: string }
   operation_types: { name: string; color: string }
 }
@@ -32,6 +32,69 @@ type GDURecord = {
   cumulative_rainfall: number; rainfall_inches: number; crop_type: string;
 }
 type SelectedOp = { op: Operation; fieldName: string }
+
+const OP_ABBREV: Record<string, string> = {
+  'Application - Chemical': 'AC',
+  'Application - Fertilizer': 'AF',
+  'Harvest': 'H',
+  'Seeding': 'S',
+  'Tillage - Disk': 'D',
+  'Tillage - Field Cultivator': 'FC',
+  'Tillage - Row Cultivator': 'RC',
+  'Tillage - Secondary': 'ST',
+  'Tillage - Shank': 'TS',
+  'Tillage - Tine Weeder': 'TW',
+  'Tillage - Rotary Hoe': 'RH',
+  'Manual Walking': 'MW',
+}
+
+const TILLAGE_OP_NAMES = new Set([
+  'Tillage - Disk', 'Tillage - Field Cultivator', 'Tillage - Row Cultivator',
+  'Tillage - Secondary', 'Tillage - Shank', 'Tillage - Tine Weeder',
+  'Tillage - Rotary Hoe', 'Manual Walking'
+])
+
+const ACTION_THRESHOLDS = [
+  { gdu: 30, action: 'Tine Weed', stage: 'Germination' },
+  { gdu: 70, action: 'Tine Weed', stage: 'Germination' },
+  { gdu: 100, action: 'Rotary Hoe', stage: 'VE' },
+  { gdu: 150, action: 'Tine Weed', stage: 'V1' },
+  { gdu: 200, action: 'Tine Weed', stage: 'V2' },
+  { gdu: 250, action: 'Row Cultivator', stage: 'V3' },
+  { gdu: 300, action: 'Row Cultivator', stage: 'V4' },
+  { gdu: 400, action: 'Row Cultivator', stage: 'V5' },
+  { gdu: 475, action: 'Row Cultivator', stage: 'V6' },
+]
+
+function getGrowthStage(gdu: number): string {
+  if (gdu < 100) return 'Germination'
+  if (gdu < 150) return 'VE'
+  if (gdu < 200) return 'V1'
+  if (gdu < 250) return 'V2'
+  if (gdu < 300) return 'V3'
+  if (gdu < 400) return 'V4'
+  if (gdu < 475) return 'V5'
+  if (gdu < 500) return 'V6'
+  return 'V6+'
+}
+
+function getNextAction(gdu: number): { action: string; gdu: number; stage: string } | null {
+  for (const t of ACTION_THRESHOLDS) {
+    if (gdu < t.gdu) return t
+  }
+  return null
+}
+
+function normalizeCropType(cropType: string | null): string {
+  if (!cropType) return 'Unknown'
+  const u = cropType.toUpperCase().replace(/ /g, '_')
+  if (u.includes('SWEET')) return 'Sweet Corn'
+  if (u.includes('CORN')) return 'Corn'
+  if (u.includes('SOY') || u.includes('BEAN')) return 'Soybeans'
+  if (u.includes('OAT')) return 'Oats'
+  if (u.includes('PEA')) return 'Peas'
+  return cropType
+}
 
 const SECTIONS = [
   { label: 'Northern Operation', filter: (f: Field) => f.region === 'North' && f.client !== 'LB Pork' },
@@ -72,6 +135,20 @@ function daysSince(dateStr: string): number {
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 
+const WEED_COLS = [
+  { label: '#', width: '32px' },
+  { label: 'Field', width: '150px' },
+  { label: 'Acres', width: '55px' },
+  { label: 'Cert', width: '40px' },
+  { label: 'GDU Since Plant', width: '85px' },
+  { label: 'Stage', width: '75px' },
+  { label: 'Last Tillage', width: '70px' },
+  { label: 'GDU↑', width: '55px' },
+  { label: 'Rain↑', width: '55px' },
+  { label: 'Next Action', width: '110px' },
+  { label: 'Forecast', width: '75px' },
+]
+
 export default function Home() {
   const now = new Date()
   const router = useRouter()
@@ -84,11 +161,13 @@ export default function Home() {
   const [opTypes, setOpTypes] = useState<OperationType[]>([])
   const [gduData, setGduData] = useState<GDURecord[]>([])
   const [loading, setLoading] = useState(true)
-  const [view, setView] = useState<'calendar' | 'year' | 'map' | 'log' | 'cert'>('calendar')
+  const [view, setView] = useState<'calendar' | 'year' | 'map' | 'log' | 'cert' | 'weed'>('calendar')
   const [mapMode, setMapMode] = useState<'work' | 'daily'>('work')
   const [showModal, setShowModal] = useState(false)
   const [editOp, setEditOp] = useState<Operation | null>(null)
   const [selectedOp, setSelectedOp] = useState<SelectedOp | null>(null)
+  const [hideStep, setHideStep] = useState(0)
+  const [hiding, setHiding] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [isMobile, setIsMobile] = useState(false)
   const [collapsedSections, setCollapsedSections] = useState<Record<string, boolean>>({})
@@ -104,6 +183,8 @@ export default function Home() {
   const daysInMonth = getDaysInMonth(year, month)
   const days = Array.from({ length: daysInMonth }, (_, i) => i + 1)
   const monthName = new Date(year, month).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
+
+  function closePopup() { setSelectedOp(null); setHideStep(0) }
 
   function toggleSection(label: string) {
     setCollapsedSections(prev => ({ ...prev, [label]: !prev[label] }))
@@ -155,13 +236,12 @@ export default function Home() {
       const startDate = `${year}-${String(month + 1).padStart(2, '0')}-01`
       const endDate = `${year}-${String(month + 1).padStart(2, '0')}-${String(daysInMonth).padStart(2, '0')}`
       const [fieldsData, opTypesData] = await Promise.all([getFields(), getOperationTypes()])
-      const { data: opsData } = await supabaseClient.from('operations').select('*, fields(name), operation_types(name, color)').gte('date', startDate).lte('date', endDate)
-      const { data: allOpsData } = await supabaseClient.from('operations').select('*, operation_types(name, color)').order('date', { ascending: false })
-      // Load all GDU data for current year for heat map calculations
-      const { data: gduRaw } = await supabaseClient.from('gdu_daily').select('*').gte('date', `${currentYear}-01-01`)
+      const { data: opsRaw } = await supabaseClient.from('operations').select('*, fields(name), operation_types(name, color)').gte('date', startDate).lte('date', endDate)
+      const { data: allOpsRaw } = await supabaseClient.from('operations').select('*, operation_types(name, color)').order('date', { ascending: false })
+      const { data: gduRaw } = await supabaseClient.from('gdu_daily').select('*').gte('date', `${year}-01-01`).lte('date', `${year}-12-31`)
       setFields(fieldsData || [])
-      setOperations(opsData || [])
-      setAllOps(allOpsData || [])
+      setOperations((opsRaw || []).filter((op: Operation) => !op.hidden))
+      setAllOps((allOpsRaw || []).filter((op: Operation) => !op.hidden))
       setOpTypes(opTypesData || [])
       setGduData(gduRaw || [])
     } catch (err) { console.error(err) }
@@ -172,12 +252,12 @@ export default function Home() {
     setLoading(true)
     try {
       const [fieldsData, opTypesData] = await Promise.all([getFields(), getOperationTypes()])
-      const { data: opsData } = await supabaseClient.from('operations').select('*, fields(name), operation_types(name, color)').gte('date', `${year}-01-01`).lte('date', `${year}-12-31`)
-      const { data: allOpsData } = await supabaseClient.from('operations').select('*, operation_types(name, color)').order('date', { ascending: false })
+      const { data: opsRaw } = await supabaseClient.from('operations').select('*, fields(name), operation_types(name, color)').gte('date', `${year}-01-01`).lte('date', `${year}-12-31`)
+      const { data: allOpsRaw } = await supabaseClient.from('operations').select('*, operation_types(name, color)').order('date', { ascending: false })
       const { data: gduRaw } = await supabaseClient.from('gdu_daily').select('*').gte('date', `${year}-01-01`).lte('date', `${year}-12-31`)
       setFields(fieldsData || [])
-      setAllYearOps(opsData || [])
-      setAllOps(allOpsData || [])
+      setAllYearOps((opsRaw || []).filter((op: Operation) => !op.hidden))
+      setAllOps((allOpsRaw || []).filter((op: Operation) => !op.hidden))
       setOpTypes(opTypesData || [])
       setGduData(gduRaw || [])
     } catch (err) { console.error(err) }
@@ -188,12 +268,12 @@ export default function Home() {
     setLoading(true)
     try {
       const [fieldsData, opTypesData] = await Promise.all([getFields(), getOperationTypes()])
-      const { data: opsData } = await supabaseClient.from('operations').select('*, fields(name), operation_types(name, color)').order('date', { ascending: false }).limit(100)
-      const { data: allOpsData } = await supabaseClient.from('operations').select('*, operation_types(name, color)').order('date', { ascending: false })
+      const { data: opsRaw } = await supabaseClient.from('operations').select('*, fields(name), operation_types(name, color)').order('date', { ascending: false }).limit(100)
+      const { data: allOpsRaw } = await supabaseClient.from('operations').select('*, operation_types(name, color)').order('date', { ascending: false })
       const { data: gduRaw } = await supabaseClient.from('gdu_daily').select('*').gte('date', `${currentYear}-01-01`)
       setFields(fieldsData || [])
-      setOperations(opsData || [])
-      setAllOps(allOpsData || [])
+      setOperations((opsRaw || []).filter((op: Operation) => !op.hidden))
+      setAllOps((allOpsRaw || []).filter((op: Operation) => !op.hidden))
       setOpTypes(opTypesData || [])
       setGduData(gduRaw || [])
     } catch (err) { console.error(err) }
@@ -216,14 +296,44 @@ export default function Home() {
 
   const totalAcresWorked = acresSummary.reduce((sum, s) => sum + s.totalAcres, 0)
 
-  // GDU averages per day for North and South calendar rows
+  function getCumulativeGDUForDay(day: number, region: 'North' | 'South') {
+    const cellDate = new Date(year, month, day)
+    const isCurrentMonth = year === currentYear && month === currentMonth
+    if (isCurrentMonth && cellDate > new Date()) return null
+    const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+    const startOfYear = `${year}-01-01`
+    const regionFieldIds = fields.filter(f => f.region === region && f.client !== 'LB Pork').map(f => f.id)
+    const records = gduData.filter(g => g.date >= startOfYear && g.date <= dateStr && regionFieldIds.includes(g.field_id))
+    if (records.length === 0) return null
+    const fieldTotals: Record<string, number> = {}
+    for (const r of records) fieldTotals[r.field_id] = (fieldTotals[r.field_id] || 0) + r.daily_gdu
+    const vals = Object.values(fieldTotals)
+    if (vals.length === 0) return null
+    return Math.round(vals.reduce((s, v) => s + v, 0) / vals.length * 10) / 10
+  }
+
+  function getCumulativeGDUForMonth(monthIndex: number, region: 'North' | 'South') {
+    const startOfYear = `${year}-01-01`
+    const endOfMonth = `${year}-${String(monthIndex + 1).padStart(2, '0')}-${String(getDaysInMonth(year, monthIndex)).padStart(2, '0')}`
+    const regionFieldIds = fields.filter(f => f.region === region && f.client !== 'LB Pork').map(f => f.id)
+    const records = gduData.filter(g => g.date >= startOfYear && g.date <= endOfMonth && regionFieldIds.includes(g.field_id))
+    if (records.length === 0) return null
+    const fieldTotals: Record<string, number> = {}
+    for (const r of records) fieldTotals[r.field_id] = (fieldTotals[r.field_id] || 0) + r.daily_gdu
+    const vals = Object.values(fieldTotals)
+    if (vals.length === 0) return null
+    return Math.round(vals.reduce((s, v) => s + v, 0) / vals.length)
+  }
+
   function getGDUForDay(day: number, region: 'North' | 'South') {
+    const cellDate = new Date(year, month, day)
+    const isCurrentMonth = year === currentYear && month === currentMonth
+    if (isCurrentMonth && cellDate > new Date()) return null
     const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`
     const regionFieldIds = fields.filter(f => f.region === region && f.client !== 'LB Pork').map(f => f.id)
     const dayRecords = gduData.filter(g => g.date === dateStr && regionFieldIds.includes(g.field_id))
     if (dayRecords.length === 0) return null
-    const avg = dayRecords.reduce((sum, g) => sum + g.daily_gdu, 0) / dayRecords.length
-    return Math.round(avg * 10) / 10
+    return Math.round(dayRecords.reduce((sum, g) => sum + g.daily_gdu, 0) / dayRecords.length * 10) / 10
   }
 
   function getGDUForMonth(monthIndex: number, region: 'North' | 'South') {
@@ -231,8 +341,7 @@ export default function Home() {
     const monthStr = `${year}-${String(monthIndex + 1).padStart(2, '0')}`
     const monthRecords = gduData.filter(g => g.date.startsWith(monthStr) && regionFieldIds.includes(g.field_id))
     if (monthRecords.length === 0) return null
-    const total = monthRecords.reduce((sum, g) => sum + g.daily_gdu, 0) / regionFieldIds.length
-    return Math.round(total * 10) / 10
+    return Math.round(monthRecords.reduce((sum, g) => sum + g.daily_gdu, 0) / regionFieldIds.length * 10) / 10
   }
 
   async function handleSignOut() {
@@ -245,8 +354,19 @@ export default function Home() {
     if (!selectedOp) return
     setDeleting(true)
     await supabase.from('operations').delete().eq('id', selectedOp.op.id)
-    setSelectedOp(null)
+    closePopup()
     setDeleting(false)
+    if (view === 'year') loadYearData()
+    else if (view === 'log') loadLogData()
+    else loadData()
+  }
+
+  async function handleHide() {
+    if (!selectedOp) return
+    setHiding(true)
+    await supabase.from('operations').update({ hidden: true }).eq('id', selectedOp.op.id)
+    closePopup()
+    setHiding(false)
     if (view === 'year') loadYearData()
     else if (view === 'log') loadLogData()
     else loadData()
@@ -285,7 +405,6 @@ export default function Home() {
     URL.revokeObjectURL(url)
   }
 
-  // Build heat map fields with correct GDU/rainfall calculations all relative to seeding date
   const fieldsWithHeat = fields.map(f => {
     const fieldOps = allOps
       .filter(op => op.field_id === f.id && op.date >= `${currentYear}-01-01`)
@@ -294,45 +413,77 @@ export default function Home() {
     const latest = fieldOps[0]
     const daysSinceWork = latest ? daysSince(latest.date) : undefined
     const lastOpType = latest?.operation_types?.name || ''
-
     const lastSeeding = fieldOps.find(op => op.operation_types?.name === 'Seeding')
     const lastHarvest = fieldOps.find(op => op.operation_types?.name === 'Harvest')
-    const isInCrop = lastSeeding
-      ? (!lastHarvest || new Date(lastSeeding.date) > new Date(lastHarvest.date))
-      : false
-
-    // All GDU records for this field from seeding date onwards
+    const isInCrop = lastSeeding ? (!lastHarvest || new Date(lastSeeding.date) > new Date(lastHarvest.date)) : false
     const seedingDate = lastSeeding?.date
-    const fieldGDU = seedingDate
-      ? gduData.filter(g => g.field_id === f.id && g.date >= seedingDate)
-      : []
+    const cropType = normalizeCropType(lastSeeding?.crop_type || lastSeeding?.notes || null)
 
-    // Cumulative GDU and rainfall since seeding — use latest record's cumulative value
+    const fieldGDU = seedingDate ? gduData.filter(g => g.field_id === f.id && g.date >= seedingDate) : []
     const sortedGDU = [...fieldGDU].sort((a, b) => b.date.localeCompare(a.date))
     const latestGDU = sortedGDU[0]
     const cumulativeGDU = latestGDU?.cumulative_gdu
     const cumulativeRainfall = latestGDU?.cumulative_rainfall
 
-    // GDU and rainfall since last work — only if last work was AFTER seeding (not the seeding itself)
     let gduSinceLastWork: number | undefined
     let rainfallSinceLastWork: number | undefined
-
     if (latest && daysSinceWork !== undefined && daysSinceWork > 0 && isInCrop && seedingDate) {
       const lastWorkDate = latest.date
-      // Only show if last work happened after seeding
       if (lastWorkDate > seedingDate) {
-        const recordsSinceWork = fieldGDU.filter(g => g.date > lastWorkDate)
-        const gduSum = recordsSinceWork.reduce((sum, g) => sum + g.daily_gdu, 0)
-        const rainSum = recordsSinceWork.reduce((sum, g) => sum + (g.rainfall_inches || 0), 0)
-        gduSinceLastWork = gduSum > 0 ? Math.round(gduSum * 10) / 10 : undefined
-        rainfallSinceLastWork = rainSum > 0 ? Math.round(rainSum * 100) / 100 : undefined
+        const recs = fieldGDU.filter(g => g.date > lastWorkDate)
+        const gs = recs.reduce((s, g) => s + g.daily_gdu, 0)
+        const rs = recs.reduce((s, g) => s + (g.rainfall_inches || 0), 0)
+        gduSinceLastWork = gs > 0 ? Math.round(gs * 10) / 10 : undefined
+        rainfallSinceLastWork = rs > 0 ? Math.round(rs * 100) / 100 : undefined
       }
     }
 
-    return { ...f, daysSinceWork, isInCrop, lastOpType, cumulativeGDU, cumulativeRainfall, gduSinceLastWork, rainfallSinceLastWork }
+    const lastTillageOp = fieldOps.find(op => TILLAGE_OP_NAMES.has(op.operation_types?.name || ''))
+    let gduSinceLastTillage: number | undefined
+    let rainfallSinceLastTillage: number | undefined
+    let lastTillageOpName: string | undefined
+    if (lastTillageOp && isInCrop && seedingDate) {
+      const lastTillageDate = lastTillageOp.date
+      lastTillageOpName = lastTillageOp.operation_types?.name
+      if (lastTillageDate >= seedingDate) {
+        const recsSince = fieldGDU.filter(g => g.date > lastTillageDate)
+        gduSinceLastTillage = Math.round(recsSince.reduce((s, g) => s + g.daily_gdu, 0))
+        rainfallSinceLastTillage = Math.round(recsSince.reduce((s, g) => s + (g.rainfall_inches || 0), 0) * 100) / 100
+      }
+    }
+
+    return {
+      ...f, daysSinceWork, isInCrop, lastOpType, cumulativeGDU, cumulativeRainfall,
+      gduSinceLastWork, rainfallSinceLastWork,
+      gduSinceLastTillage, rainfallSinceLastTillage, lastTillageOpName,
+      cropType, seedingDate
+    }
   })
 
   const heatMapFields = mapMode === 'daily' ? fieldsWithHeat.filter(f => f.isInCrop) : fieldsWithHeat
+
+  const fieldMetaMap: Record<string, { gduSinceLastTillage?: number; rainfallSinceLastTillage?: number; isInCrop: boolean }> = {}
+  for (const f of fieldsWithHeat) {
+    fieldMetaMap[f.id] = {
+      gduSinceLastTillage: f.gduSinceLastTillage,
+      rainfallSinceLastTillage: f.rainfallSinceLastTillage,
+      isInCrop: f.isInCrop
+    }
+  }
+
+  function getForecastDate(currentGDU: number, targetGDU: number, fieldId: string): string {
+    try {
+      const recent = gduData.filter(g => g.field_id === fieldId).sort((a, b) => b.date.localeCompare(a.date)).slice(0, 7)
+      const avgDaily = recent.length > 0 ? recent.reduce((s, g) => s + (g.daily_gdu || 0), 0) / recent.length : 15
+      if (!avgDaily || avgDaily <= 0) return 'Unknown'
+      const daysNeeded = Math.ceil((targetGDU - currentGDU) / avgDaily)
+      if (daysNeeded <= 0) return 'Now'
+      if (daysNeeded > 90) return '90+ days'
+      const date = new Date()
+      date.setDate(date.getDate() + daysNeeded)
+      return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+    } catch (e) { return 'Unknown' }
+  }
 
   const onSaved = () => {
     setShowModal(false); setEditOp(null)
@@ -348,14 +499,35 @@ export default function Home() {
     display: 'flex', alignItems: 'center', gap: '8px'
   }
 
-  const fieldNameStyle = { cursor: 'pointer', borderBottom: '1px dotted #4a5a3a', color: '#a8b888' }
+  const gduCellStyle = (hasData: boolean) => ({
+    padding: '2px 2px', textAlign: 'center' as const,
+    fontSize: '9px', color: hasData ? '#6aaa6a' : '#2a3020', borderTop: '1px solid #1a2016'
+  })
+
+  const cumulCellStyle = (hasData: boolean) => ({
+    padding: '2px 2px', textAlign: 'center' as const,
+    fontSize: '9px', color: hasData ? '#aad4ff' : '#2a3020',
+  })
 
   function FieldNameCell({ field }: { field: Field }) {
+    const meta = fieldMetaMap[field.id]
     return (
       <>
-        <span onClick={e => { e.stopPropagation(); goToFieldOnMap(field.id) }} style={fieldNameStyle} title="View on heat map">{field.name}</span>
+        <span onClick={e => { e.stopPropagation(); goToFieldOnMap(field.id) }}
+          style={{ cursor: 'pointer', borderBottom: '1px dotted #4a5a3a', color: '#a8b888' }}
+          title="View on heat map">{field.name}</span>
         <span style={{ fontSize: '9px', color: '#6b7a5a', marginLeft: '5px' }}>{certBadge(field.cert_status)}</span>
         {field.acres && <span style={{ fontSize: '10px', color: '#4a5a3a', marginLeft: '4px' }}>{field.acres}ac</span>}
+        {meta?.isInCrop && meta.gduSinceLastTillage !== undefined && (
+          <span style={{ fontSize: '9px', color: '#cc8800', marginLeft: '5px' }} title="GDUs since last tillage">
+            {meta.gduSinceLastTillage}↑
+          </span>
+        )}
+        {meta?.isInCrop && meta.rainfallSinceLastTillage !== undefined && meta.rainfallSinceLastTillage > 0 && (
+          <span style={{ fontSize: '9px', color: '#6aaa6a', marginLeft: '3px' }} title="Rainfall since last tillage">
+            {meta.rainfallSinceLastTillage}"
+          </span>
+        )}
       </>
     )
   }
@@ -365,19 +537,85 @@ export default function Home() {
     return { ...g, count: groupFields.length, totalAcres: groupFields.reduce((sum, f) => sum + (f.acres || 0), 0) }
   })
 
+  const weedingFields = fieldsWithHeat.filter(f =>
+    f.isInCrop && f.cumulativeGDU !== undefined && f.client !== 'LB Pork' &&
+    (f.region === 'North' || f.region === 'South')
+  )
+
   const p = isMobile ? '12px 16px' : '16px 32px'
 
-  const gduCellStyle = (hasData: boolean) => ({
-    padding: '2px 2px', textAlign: 'center' as const,
-    fontSize: '9px', color: hasData ? '#6aaa6a' : '#2a3020',
-    borderTop: '1px solid #1a2016'
-  })
+  function renderPopupContent() {
+    if (!selectedOp) return null
+    const op = selectedOp.op
+    const opDate = new Date(op.date + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+    const opName = op.operation_types?.name || 'Operation'
+    const isJD = op.source === 'john_deere'
+
+    if (hideStep === 2) {
+      return (
+        <>
+          <div style={{ fontSize: '13px', color: '#ffaa44', marginBottom: '6px', fontWeight: 'bold' }}>⚠ Final Confirmation</div>
+          <div style={{ fontSize: '12px', color: '#c8d4a0', marginBottom: '4px' }}>{selectedOp.fieldName}</div>
+          <div style={{ fontSize: '12px', color: '#8a9a6a', marginBottom: '4px' }}>{opName} — {opDate}</div>
+          <div style={{ fontSize: '12px', color: '#cc6644', marginBottom: '16px', padding: '10px 12px', backgroundColor: '#1a0f0a', borderRadius: '4px', border: '1px solid #cc664433' }}>
+            This operation will be hidden from all views. It is not deleted and can be restored directly in the database if needed.
+          </div>
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <button onClick={handleHide} disabled={hiding} style={{ padding: isMobile ? '10px 16px' : '7px 14px', backgroundColor: '#8b3a0a', border: 'none', color: '#ffccaa', borderRadius: '4px', cursor: 'pointer', fontSize: isMobile ? '14px' : '13px', flex: 1, fontWeight: 'bold' }}>
+              {hiding ? 'Hiding...' : 'Yes, Hide It'}
+            </button>
+            <button onClick={() => setHideStep(0)} style={{ padding: isMobile ? '10px 16px' : '7px 14px', background: 'none', border: '1px solid #2a3020', color: '#6b7a5a', borderRadius: '4px', cursor: 'pointer', fontSize: isMobile ? '14px' : '13px', flex: 1 }}>Cancel</button>
+          </div>
+        </>
+      )
+    }
+
+    if (hideStep === 1) {
+      return (
+        <>
+          <div style={{ fontSize: '13px', color: '#cc8800', marginBottom: '6px', fontWeight: 'bold' }}>⚠ Hide this operation?</div>
+          <div style={{ fontSize: '12px', color: '#c8d4a0', marginBottom: '4px' }}>{selectedOp.fieldName}</div>
+          <div style={{ fontSize: '12px', color: '#8a9a6a', marginBottom: '4px' }}>{opName} — {opDate}</div>
+          <div style={{ fontSize: '12px', color: '#8a9a6a', marginBottom: '16px', padding: '10px 12px', backgroundColor: '#1a1408', borderRadius: '4px', border: '1px solid #cc880033' }}>
+            Hiding removes this entry from the calendar and all views. Use this for test operations or equipment checks that did not represent actual field work.
+          </div>
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <button onClick={() => setHideStep(2)} style={{ padding: isMobile ? '10px 16px' : '7px 14px', backgroundColor: '#5a3800', border: '1px solid #cc8800', color: '#ffcc66', borderRadius: '4px', cursor: 'pointer', fontSize: isMobile ? '14px' : '13px', flex: 1 }}>
+              Continue →
+            </button>
+            <button onClick={() => setHideStep(0)} style={{ padding: isMobile ? '10px 16px' : '7px 14px', background: 'none', border: '1px solid #2a3020', color: '#6b7a5a', borderRadius: '4px', cursor: 'pointer', fontSize: isMobile ? '14px' : '13px', flex: 1 }}>Cancel</button>
+          </div>
+        </>
+      )
+    }
+
+    return (
+      <>
+        <div style={{ fontSize: isMobile ? '16px' : '14px', color: '#c8d4a0', marginBottom: '6px', fontWeight: 'bold' }}>{selectedOp.fieldName}</div>
+        <div style={{ fontSize: '14px', color: '#8a9a6a', marginBottom: '4px' }}>{opName}</div>
+        <div style={{ fontSize: '13px', color: '#6b7a5a', marginBottom: isJD ? '4px' : '14px' }}>{opDate}</div>
+        {isJD && <div style={{ fontSize: '10px', color: '#4a6a3a', marginBottom: '14px', letterSpacing: '0.1em' }}>SOURCE: JOHN DEERE</div>}
+        {op.notes && <div style={{ fontSize: '12px', color: '#6b7a5a', marginBottom: '14px', fontStyle: 'italic' }}>{op.notes}</div>}
+        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+          <button onClick={() => { setEditOp(op); closePopup() }} style={{ padding: isMobile ? '10px 16px' : '7px 14px', backgroundColor: '#1a2a3a', border: 'none', color: '#aac8ff', borderRadius: '4px', cursor: 'pointer', fontSize: isMobile ? '14px' : '13px', flex: 1 }}>Edit</button>
+          <button onClick={handleDelete} disabled={deleting} style={{ padding: isMobile ? '10px 16px' : '7px 14px', backgroundColor: '#6b1a1a', border: 'none', color: '#ffaaaa', borderRadius: '4px', cursor: 'pointer', fontSize: isMobile ? '14px' : '13px', flex: 1 }}>{deleting ? '...' : 'Delete'}</button>
+          <button onClick={closePopup} style={{ padding: isMobile ? '10px 16px' : '7px 14px', background: 'none', border: '1px solid #2a3020', color: '#6b7a5a', borderRadius: '4px', cursor: 'pointer', fontSize: isMobile ? '14px' : '13px', flex: 1 }}>Cancel</button>
+        </div>
+        {isJD && (
+          <div style={{ marginTop: '10px', paddingTop: '10px', borderTop: '1px solid #1a2016' }}>
+            <button onClick={() => setHideStep(1)} style={{ width: '100%', padding: isMobile ? '10px 16px' : '7px 14px', backgroundColor: 'transparent', border: '1px solid #5a4800', color: '#aa8833', borderRadius: '4px', cursor: 'pointer', fontSize: isMobile ? '13px' : '12px' }}>
+              Hide from calendar (test/equipment check)
+            </button>
+          </div>
+        )}
+      </>
+    )
+  }
 
   return (
     <div style={{ minHeight: '100vh', backgroundColor: '#0f1410', color: '#e8ead5', fontFamily: "'Georgia', serif" }}
-      onClick={() => { setSelectedOp(null); setShowMenu(false) }}>
+      onClick={() => { closePopup(); setShowMenu(false) }}>
 
-      {/* Header */}
       <div style={{ borderBottom: '1px solid #2a3020', padding: p, backgroundColor: '#0f1410' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
           <div>
@@ -408,18 +646,19 @@ export default function Home() {
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
           <div style={{ display: 'flex', border: '1px solid #2a3020', borderRadius: '4px', overflow: 'hidden' }}>
-            {isMobile && <button onClick={() => setView('log')} style={{ padding: '8px 14px', cursor: 'pointer', fontSize: '13px', border: 'none', backgroundColor: view === 'log' ? '#2a3020' : 'transparent', color: view === 'log' ? '#c8d4a0' : '#6b7a5a' }}>Recent</button>}
-            <button onClick={() => setView('calendar')} style={{ padding: isMobile ? '8px 12px' : '6px 14px', cursor: 'pointer', fontSize: isMobile ? '13px' : '12px', border: 'none', backgroundColor: view === 'calendar' ? '#2a3020' : 'transparent', color: view === 'calendar' ? '#c8d4a0' : '#6b7a5a' }}>Month</button>
-            <button onClick={() => setView('year')} style={{ padding: isMobile ? '8px 12px' : '6px 14px', cursor: 'pointer', fontSize: isMobile ? '13px' : '12px', border: 'none', backgroundColor: view === 'year' ? '#2a3020' : 'transparent', color: view === 'year' ? '#c8d4a0' : '#6b7a5a' }}>Year</button>
-            <button onClick={() => setView('map')} style={{ padding: isMobile ? '8px 12px' : '6px 14px', cursor: 'pointer', fontSize: isMobile ? '13px' : '12px', border: 'none', backgroundColor: view === 'map' ? '#2a3020' : 'transparent', color: view === 'map' ? '#c8d4a0' : '#6b7a5a' }}>Map</button>
-            <button onClick={() => setView('cert')} style={{ padding: isMobile ? '8px 12px' : '6px 14px', cursor: 'pointer', fontSize: isMobile ? '13px' : '12px', border: 'none', backgroundColor: view === 'cert' ? '#2a3020' : 'transparent', color: view === 'cert' ? '#c8d4a0' : '#6b7a5a' }}>Cert</button>
+            {isMobile && <button onClick={() => setView('log')} style={{ padding: '8px 10px', cursor: 'pointer', fontSize: '12px', border: 'none', backgroundColor: view === 'log' ? '#2a3020' : 'transparent', color: view === 'log' ? '#c8d4a0' : '#6b7a5a' }}>Recent</button>}
+            <button onClick={() => setView('calendar')} style={{ padding: isMobile ? '8px 10px' : '6px 12px', cursor: 'pointer', fontSize: '12px', border: 'none', backgroundColor: view === 'calendar' ? '#2a3020' : 'transparent', color: view === 'calendar' ? '#c8d4a0' : '#6b7a5a' }}>Month</button>
+            <button onClick={() => setView('year')} style={{ padding: isMobile ? '8px 10px' : '6px 12px', cursor: 'pointer', fontSize: '12px', border: 'none', backgroundColor: view === 'year' ? '#2a3020' : 'transparent', color: view === 'year' ? '#c8d4a0' : '#6b7a5a' }}>Year</button>
+            <button onClick={() => setView('map')} style={{ padding: isMobile ? '8px 10px' : '6px 12px', cursor: 'pointer', fontSize: '12px', border: 'none', backgroundColor: view === 'map' ? '#2a3020' : 'transparent', color: view === 'map' ? '#c8d4a0' : '#6b7a5a' }}>Map</button>
+            <button onClick={() => setView('cert')} style={{ padding: isMobile ? '8px 10px' : '6px 12px', cursor: 'pointer', fontSize: '12px', border: 'none', backgroundColor: view === 'cert' ? '#2a3020' : 'transparent', color: view === 'cert' ? '#c8d4a0' : '#6b7a5a' }}>Cert</button>
+            <button onClick={() => setView('weed')} style={{ padding: isMobile ? '8px 10px' : '6px 12px', cursor: 'pointer', fontSize: '12px', border: 'none', backgroundColor: view === 'weed' ? '#2a3020' : 'transparent', color: view === 'weed' ? '#c8d4a0' : '#6b7a5a' }}>Weed</button>
           </div>
           {!isMobile && (
             <div style={{ marginLeft: 'auto', display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
               {opTypes.map(op => (
-                <div key={op.name} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', color: '#8a9a6a' }}>
-                  <div style={{ width: '8px', height: '8px', borderRadius: '2px', backgroundColor: op.color }} />
-                  {op.name}
+                <div key={op.name} style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px', color: '#8a9a6a' }}>
+                  <div style={{ width: '8px', height: '8px', borderRadius: '2px', backgroundColor: op.color, flexShrink: 0 }} />
+                  <span>{OP_ABBREV[op.name] || op.name.slice(0, 2)}</span>
                 </div>
               ))}
             </div>
@@ -434,14 +673,14 @@ export default function Home() {
         </div>
       )}
 
-      {!loading && acresSummary.length > 0 && view !== 'log' && view !== 'cert' && (
+      {!loading && acresSummary.length > 0 && view !== 'log' && view !== 'cert' && view !== 'weed' && (
         <div style={{ padding: isMobile ? '8px 16px' : '12px 32px', borderBottom: '1px solid #2a3020', display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap', backgroundColor: '#0c1410' }}>
           {!isMobile && <div style={{ fontSize: '11px', letterSpacing: '0.15em', textTransform: 'uppercase', color: '#4a5a3a' }}>{view === 'year' ? `${year}` : monthName}</div>}
-          <div style={{ display: 'flex', gap: isMobile ? '10px' : '16px', flexWrap: 'wrap', alignItems: 'center' }}>
+          <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'center' }}>
             {acresSummary.map(s => (
               <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                 <div style={{ width: '8px', height: '8px', borderRadius: '2px', backgroundColor: s.color, flexShrink: 0 }} />
-                <span style={{ fontSize: '11px', color: '#8a9a6a' }}>{s.name.replace('Tillage - ', '').replace('Application - ', '').slice(0, isMobile ? 4 : 20)}:</span>
+                <span style={{ fontSize: '11px', color: '#8a9a6a' }}>{OP_ABBREV[s.name] || s.name.slice(0, 2)}:</span>
                 <span style={{ fontSize: '11px', color: '#c8d4a0', fontWeight: 'bold' }}>{s.totalAcres.toLocaleString('en-US', { maximumFractionDigits: 0 })}ac</span>
               </div>
             ))}
@@ -452,7 +691,7 @@ export default function Home() {
         </div>
       )}
 
-      {view !== 'log' && view !== 'map' && view !== 'cert' && (
+      {view !== 'log' && view !== 'map' && view !== 'cert' && view !== 'weed' && (
         <div style={{ padding: isMobile ? '10px 16px' : '16px 32px', display: 'flex', alignItems: 'center', gap: '12px' }}>
           {view === 'year' ? (
             <>
@@ -492,7 +731,7 @@ export default function Home() {
                     {op.notes && <div style={{ fontSize: '11px', color: '#6b7a5a', marginTop: '3px', fontStyle: 'italic' }}>{op.notes}</div>}
                   </div>
                   <div style={{ fontSize: '12px', color: '#6b7a5a', textAlign: 'right', flexShrink: 0, marginLeft: '12px' }}>
-                    <div style={{ fontSize: isMobile ? '13px' : '12px' }}>{new Date(op.date + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</div>
+                    <div>{new Date(op.date + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</div>
                     <div style={{ fontSize: '11px' }}>{field?.acres}ac</div>
                     {field?.client === 'LB Pork' && <div style={{ fontSize: '10px', color: '#4a6a8a' }}>LB Pork</div>}
                   </div>
@@ -508,7 +747,7 @@ export default function Home() {
         <div style={{ padding: isMobile ? '12px 16px' : '24px 32px' }}>
           <div style={{ display: 'flex', gap: '10px', marginBottom: '24px', flexWrap: 'wrap' }}>
             {certTotals.map(g => (
-              <div key={g.key} style={{ backgroundColor: '#111612', border: `1px solid ${g.color}44`, borderRadius: '8px', padding: '14px 16px', minWidth: isMobile ? '140px' : '160px', flex: '1' }}>
+              <div key={g.key} style={{ backgroundColor: '#111612', border: `1px solid ${g.color}44`, borderRadius: '8px', padding: '14px 16px', minWidth: isMobile ? '130px' : '160px', flex: '1' }}>
                 <div style={{ fontSize: '10px', letterSpacing: '0.1em', textTransform: 'uppercase', color: g.color, marginBottom: '6px' }}>{g.badge}</div>
                 <div style={{ fontSize: '22px', color: '#c8d4a0' }}>{g.count}</div>
                 <div style={{ fontSize: '11px', color: '#6b7a5a' }}>fields</div>
@@ -534,7 +773,6 @@ export default function Home() {
                         </div>
                         <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', fontSize: '12px', color: '#6b7a5a' }}>
                           {field.acres && <span>{field.acres}ac</span>}
-                          {field.client && field.client !== 'Ufer Farms' && <span style={{ color: '#4a6a8a' }}>{field.client}</span>}
                           {field.cert_transition_start && <span>Trans: {new Date(field.cert_transition_start + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}</span>}
                           {field.cert_expiry && <span style={{ color: new Date(field.cert_expiry) < new Date() ? '#ff6b6b' : '#a8b888' }}>Exp: {new Date(field.cert_expiry + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}</span>}
                         </div>
@@ -580,6 +818,128 @@ export default function Home() {
         </div>
       )}
 
+      {/* Weeding Action Plan */}
+      {!loading && view === 'weed' && (
+        <div style={{ padding: isMobile ? '12px 16px' : '24px 32px' }}>
+          <div style={{ marginBottom: '20px', display: 'flex', alignItems: 'baseline', gap: '12px', flexWrap: 'wrap' }}>
+            <div style={{ fontSize: '11px', letterSpacing: '0.15em', textTransform: 'uppercase', color: '#6b7a5a' }}>Weeding Action Plan — {weedingFields.length} fields in crop</div>
+            <div style={{ fontSize: '11px', color: '#4a5a3a' }}>Priority: GDUs since last tillage, or GDUs since planting if no tillage</div>
+          </div>
+          <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', marginBottom: '20px', padding: '10px 16px', backgroundColor: '#111612', borderRadius: '6px', border: '1px solid #2a3020' }}>
+            {ACTION_THRESHOLDS.map(t => (
+              <div key={t.gdu} style={{ fontSize: '11px', color: '#6b7a5a' }}>
+                <span style={{ color: '#a8b888' }}>{t.stage}</span> {t.gdu} GDU → <span style={{ color: '#c8d4a0' }}>{t.action}</span>
+              </div>
+            ))}
+          </div>
+          {['North', 'South'].map(region => {
+            const regionFields = weedingFields.filter(f => f.region === region)
+            if (regionFields.length === 0) return null
+            const cropGroups: Record<string, typeof regionFields> = {}
+            for (const f of regionFields) {
+              const crop = f.cropType || 'Unknown'
+              if (!cropGroups[crop]) cropGroups[crop] = []
+              cropGroups[crop].push(f)
+            }
+            return (
+              <div key={region} style={{ marginBottom: '32px' }}>
+                <div style={{ fontSize: '12px', letterSpacing: '0.15em', textTransform: 'uppercase', color: '#8a9a6a', marginBottom: '16px', borderBottom: '1px solid #2a3020', paddingBottom: '8px' }}>
+                  {region}ern Operation — {regionFields.length} fields
+                </div>
+                {Object.entries(cropGroups).map(([cropType, cropFields]) => {
+                  const sorted = [...cropFields].sort((a, b) => {
+                    const pa = a.gduSinceLastTillage ?? a.cumulativeGDU ?? 0
+                    const pb = b.gduSinceLastTillage ?? b.cumulativeGDU ?? 0
+                    return pb - pa
+                  })
+                  return (
+                    <div key={cropType} style={{ marginBottom: '24px' }}>
+                      <div style={{ fontSize: '11px', color: '#cc8800', letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: '8px' }}>
+                        {cropType} ({cropFields.length} fields)
+                      </div>
+                      {isMobile ? (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                          {sorted.map((f, i) => {
+                            const gdu = f.cumulativeGDU || 0
+                            const nextAction = getNextAction(gdu)
+                            const forecast = nextAction ? getForecastDate(gdu, nextAction.gdu, f.id) : null
+                            const priority = f.gduSinceLastTillage ?? f.cumulativeGDU ?? 0
+                            return (
+                              <div key={f.id} style={{ backgroundColor: '#111612', border: '1px solid #2a3020', borderRadius: '6px', padding: '12px 14px', borderLeft: `3px solid ${i === 0 ? '#ff6b6b' : i < 3 ? '#ffaa44' : '#4a5a3a'}` }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
+                                  <span style={{ fontSize: '14px', color: '#c8d4a0' }}>{f.name}</span>
+                                  <span style={{ fontSize: '11px', color: '#cc8800', fontWeight: 'bold' }}>{priority} GDU↑</span>
+                                </div>
+                                <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', fontSize: '12px', color: '#8a9a6a' }}>
+                                  <span>{Math.round(gdu)} GDU total</span>
+                                  <span style={{ color: '#c8d4a0' }}>{getGrowthStage(gdu)}</span>
+                                  {nextAction && <span>→ {nextAction.action}</span>}
+                                  {forecast && <span style={{ color: '#aad4ff' }}>~{forecast}</span>}
+                                </div>
+                              </div>
+                            )
+                          })}
+                        </div>
+                      ) : (
+                        <table style={{ width: '100%', borderCollapse: 'collapse', tableLayout: 'fixed' }}>
+                          <thead>
+                            <tr>
+                              {WEED_COLS.map(({ label, width }) => (
+                                <th key={label} style={{ textAlign: 'left', padding: '5px 10px', fontSize: '10px', color: '#4a5a3a', letterSpacing: '0.1em', textTransform: 'uppercase', borderBottom: '1px solid #1a2016', width, overflow: 'hidden' }}>{label}</th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {sorted.map((f, i) => {
+                              const gdu = f.cumulativeGDU || 0
+                              const stage = getGrowthStage(gdu)
+                              const nextAction = getNextAction(gdu)
+                              const forecast = nextAction ? getForecastDate(gdu, nextAction.gdu, f.id) : null
+                              const priority = i === 0 ? '#ff6b6b' : i < 3 ? '#ffaa44' : '#6b7a5a'
+                              const hasTillage = f.gduSinceLastTillage !== undefined
+                              return (
+                                <tr key={f.id} style={{ backgroundColor: i % 2 === 0 ? '#111612' : '#0f1410' }}>
+                                  <td style={{ padding: '7px 10px', fontSize: '11px', color: priority, borderBottom: '1px solid #1a2016', fontWeight: 'bold', overflow: 'hidden' }}>{i + 1}</td>
+                                  <td style={{ padding: '7px 10px', fontSize: '12px', color: '#a8b888', borderBottom: '1px solid #1a2016', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                    <span onClick={() => goToFieldOnMap(f.id)} style={{ cursor: 'pointer', borderBottom: '1px dotted #4a5a3a' }}>{f.name}</span>
+                                  </td>
+                                  <td style={{ padding: '7px 10px', fontSize: '11px', color: '#6b7a5a', borderBottom: '1px solid #1a2016', overflow: 'hidden' }}>{f.acres}</td>
+                                  <td style={{ padding: '7px 10px', fontSize: '11px', color: '#6b7a5a', borderBottom: '1px solid #1a2016', overflow: 'hidden' }}>{certBadge(f.cert_status)}</td>
+                                  <td style={{ padding: '7px 10px', fontSize: '12px', color: '#c8d4a0', borderBottom: '1px solid #1a2016', overflow: 'hidden' }}>{Math.round(gdu)}</td>
+                                  <td style={{ padding: '7px 10px', fontSize: '12px', color: '#8a9a6a', borderBottom: '1px solid #1a2016', overflow: 'hidden' }}>{stage}</td>
+                                  <td style={{ padding: '7px 10px', fontSize: '11px', color: '#6b7a5a', borderBottom: '1px solid #1a2016', overflow: 'hidden' }}>
+                                    {f.lastTillageOpName ? (OP_ABBREV[f.lastTillageOpName] || f.lastTillageOpName) : '—'}
+                                  </td>
+                                  <td style={{ padding: '7px 10px', fontSize: '12px', color: hasTillage ? '#cc8800' : '#6b7a5a', borderBottom: '1px solid #1a2016', fontWeight: hasTillage ? 'bold' : 'normal', overflow: 'hidden' }}>
+                                    {hasTillage ? f.gduSinceLastTillage : `(${Math.round(gdu)})`}
+                                  </td>
+                                  <td style={{ padding: '7px 10px', fontSize: '12px', color: '#6aaa6a', borderBottom: '1px solid #1a2016', overflow: 'hidden' }}>
+                                    {hasTillage && f.rainfallSinceLastTillage !== undefined ? `${f.rainfallSinceLastTillage}"` : '—'}
+                                  </td>
+                                  <td style={{ padding: '7px 10px', fontSize: '12px', color: '#c8d4a0', borderBottom: '1px solid #1a2016', overflow: 'hidden' }}>
+                                    {nextAction ? nextAction.action : 'Beyond V6'}
+                                  </td>
+                                  <td style={{ padding: '7px 10px', fontSize: '12px', color: '#aad4ff', borderBottom: '1px solid #1a2016', overflow: 'hidden' }}>
+                                    {forecast || '—'}
+                                  </td>
+                                </tr>
+                              )
+                            })}
+                          </tbody>
+                        </table>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            )
+          })}
+          {weedingFields.length === 0 && (
+            <div style={{ color: '#6b7a5a', fontSize: '14px', textAlign: 'center', padding: '40px' }}>No fields currently in crop with GDU data.</div>
+          )}
+        </div>
+      )}
+
       {/* Year View */}
       {!loading && view === 'year' && fields.length > 0 && (
         <div style={{ padding: '0 32px 32px', overflowX: 'auto' }}>
@@ -590,6 +950,14 @@ export default function Home() {
                 {MONTHS.map((m, i) => (
                   <th key={m} style={{ padding: '8px 4px', textAlign: 'center', fontSize: '11px', color: i === currentMonth && year === currentYear ? '#c8d4a0' : '#6b7a5a', borderBottom: '1px solid #2a3020', borderLeft: i === currentMonth && year === currentYear ? '2px solid #c8d4a040' : undefined, fontWeight: i === currentMonth && year === currentYear ? 'bold' : 'normal' }}>{m}</th>
                 ))}
+              </tr>
+              <tr style={{ backgroundColor: '#080d08' }}>
+                <td style={{ padding: '2px 12px', fontSize: '9px', color: '#3a6a3a', position: 'sticky', left: 0, backgroundColor: '#080d08', letterSpacing: '0.1em', textTransform: 'uppercase', borderBottom: '1px solid #1a2016' }}>Cumul GDU N</td>
+                {MONTHS.map((m, mi) => { const v = getCumulativeGDUForMonth(mi, 'North'); return <td key={m} style={cumulCellStyle(v !== null)}>{v !== null ? v : ''}</td> })}
+              </tr>
+              <tr style={{ backgroundColor: '#080d08' }}>
+                <td style={{ padding: '2px 12px', fontSize: '9px', color: '#3a6a3a', position: 'sticky', left: 0, backgroundColor: '#080d08', letterSpacing: '0.1em', textTransform: 'uppercase', borderBottom: '1px solid #2a3020' }}>Cumul GDU S</td>
+                {MONTHS.map((m, mi) => { const v = getCumulativeGDUForMonth(mi, 'South'); return <td key={m} style={cumulCellStyle(v !== null)}>{v !== null ? v : ''}</td> })}
               </tr>
             </thead>
             <tbody>
@@ -621,7 +989,9 @@ export default function Home() {
                                 {monthOps.map(op => (
                                   <div key={op.id} onClick={e => { e.stopPropagation(); setSelectedOp({ op, fieldName: field.name }) }}
                                     title={`${op.operation_types?.name} — ${new Date(op.date + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`}
-                                    style={{ width: '10px', height: '10px', borderRadius: '2px', backgroundColor: op.operation_types?.color || '#666', cursor: 'pointer', flexShrink: 0 }} />
+                                    style={{ width: '20px', height: '16px', borderRadius: '2px', backgroundColor: op.operation_types?.color || '#666', cursor: 'pointer', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '7px', color: '#fff', fontWeight: 'bold' }}>
+                                    {OP_ABBREV[op.operation_types?.name || ''] || op.operation_types?.name?.slice(0, 1) || '?'}
+                                  </div>
                                 ))}
                               </div>
                             </td>
@@ -631,13 +1001,8 @@ export default function Home() {
                     ))}
                     {!collapsed && !isLBPork && (
                       <tr style={{ backgroundColor: '#0a0f0b' }}>
-                        <td style={{ padding: '4px 12px', fontSize: '9px', color: '#4a6a4a', borderBottom: '1px solid #2a3020', position: 'sticky', left: 0, backgroundColor: '#0a0f0b', letterSpacing: '0.1em', textTransform: 'uppercase' }}>
-                          GDU avg ({region})
-                        </td>
-                        {MONTHS.map((m, mi) => {
-                          const gdu = getGDUForMonth(mi, region as 'North' | 'South')
-                          return <td key={m} style={gduCellStyle(gdu !== null)}>{gdu !== null ? gdu : ''}</td>
-                        })}
+                        <td style={{ padding: '3px 12px', fontSize: '9px', color: '#4a6a4a', borderBottom: '1px solid #2a3020', position: 'sticky', left: 0, backgroundColor: '#0a0f0b', letterSpacing: '0.1em', textTransform: 'uppercase' }}>GDU avg ({region})</td>
+                        {MONTHS.map((m, mi) => { const gdu = getGDUForMonth(mi, region as 'North' | 'South'); return <td key={m} style={gduCellStyle(gdu !== null)}>{gdu !== null ? gdu : ''}</td> })}
                       </tr>
                     )}
                   </React.Fragment>
@@ -696,6 +1061,14 @@ export default function Home() {
                   )
                 })}
               </tr>
+              <tr style={{ backgroundColor: '#080d08' }}>
+                <td style={{ padding: '2px 12px', fontSize: '9px', color: '#3a6a3a', position: 'sticky', left: 0, backgroundColor: '#080d08', letterSpacing: '0.1em', textTransform: 'uppercase', borderBottom: '1px solid #1a2016', whiteSpace: 'nowrap' }}>Cumul GDU N</td>
+                {days.map(day => { const v = getCumulativeGDUForDay(day, 'North'); return <td key={day} style={cumulCellStyle(v !== null)}>{v !== null ? v : ''}</td> })}
+              </tr>
+              <tr style={{ backgroundColor: '#080d08' }}>
+                <td style={{ padding: '2px 12px', fontSize: '9px', color: '#3a6a3a', position: 'sticky', left: 0, backgroundColor: '#080d08', letterSpacing: '0.1em', textTransform: 'uppercase', borderBottom: '1px solid #2a3020', whiteSpace: 'nowrap' }}>Cumul GDU S</td>
+                {days.map(day => { const v = getCumulativeGDUForDay(day, 'South'); return <td key={day} style={cumulCellStyle(v !== null)}>{v !== null ? v : ''}</td> })}
+              </tr>
             </thead>
             <tbody>
               {SECTIONS.map(({ label, filter }) => {
@@ -724,10 +1097,10 @@ export default function Home() {
                           return (
                             <td key={day} style={{ padding: '3px 2px', textAlign: 'center', borderBottom: '1px solid #1a2016', borderLeft: isToday ? '2px solid #c8d4a04a' : undefined, backgroundColor: weekend ? '#0d1009' : undefined }}>
                               {op && (
-                                <div onClick={e => { e.stopPropagation(); setSelectedOp({ op, fieldName: field.name }) }}
+                                <div onClick={e => { e.stopPropagation(); setHideStep(0); setSelectedOp({ op, fieldName: field.name }) }}
                                   title={op.operation_types?.name}
-                                  style={{ backgroundColor: op.operation_types?.color || '#666', color: '#fff', width: '28px', height: '22px', borderRadius: '3px', margin: '0 auto', fontSize: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', letterSpacing: '0.05em', cursor: 'pointer' }}>
-                                  {op.operation_types?.name?.replace('Tillage - ', '').replace('Application - ', '').slice(0, 2).toUpperCase()}
+                                  style={{ backgroundColor: op.operation_types?.color || '#666', color: '#fff', width: '28px', height: '22px', borderRadius: '3px', margin: '0 auto', fontSize: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', fontWeight: 'bold' }}>
+                                  {OP_ABBREV[op.operation_types?.name || ''] || op.operation_types?.name?.slice(0, 2).toUpperCase() || '?'}
                                 </div>
                               )}
                             </td>
@@ -737,13 +1110,8 @@ export default function Home() {
                     ))}
                     {!collapsed && !isLBPork && (
                       <tr style={{ backgroundColor: '#0a0f0b' }}>
-                        <td style={{ padding: '3px 12px', fontSize: '9px', color: '#4a6a4a', borderBottom: '1px solid #2a3020', position: 'sticky', left: 0, backgroundColor: '#0a0f0b', letterSpacing: '0.1em', textTransform: 'uppercase' }}>
-                          GDU avg
-                        </td>
-                        {days.map(day => {
-                          const gdu = getGDUForDay(day, region as 'North' | 'South')
-                          return <td key={day} style={gduCellStyle(gdu !== null)}>{gdu !== null ? gdu : ''}</td>
-                        })}
+                        <td style={{ padding: '3px 12px', fontSize: '9px', color: '#4a6a4a', borderBottom: '1px solid #2a3020', position: 'sticky', left: 0, backgroundColor: '#0a0f0b', letterSpacing: '0.1em', textTransform: 'uppercase' }}>GDU avg</td>
+                        {days.map(day => { const gdu = getGDUForDay(day, region as 'North' | 'South'); return <td key={day} style={gduCellStyle(gdu !== null)}>{gdu !== null ? gdu : ''}</td> })}
                       </tr>
                     )}
                   </React.Fragment>
@@ -756,18 +1124,8 @@ export default function Home() {
 
       {/* Operation Popup */}
       {selectedOp && (
-        <div onClick={e => e.stopPropagation()} style={{ position: 'fixed', left: '50%', top: '50%', transform: 'translate(-50%, -50%)', backgroundColor: '#111612', border: '1px solid #2a3020', borderRadius: '8px', padding: '20px', zIndex: 999, minWidth: '240px', width: isMobile ? '88vw' : 'auto', boxShadow: '0 4px 24px rgba(0,0,0,0.6)' }}>
-          <div style={{ fontSize: isMobile ? '16px' : '14px', color: '#c8d4a0', marginBottom: '6px', fontWeight: 'bold' }}>{selectedOp.fieldName}</div>
-          <div style={{ fontSize: '14px', color: '#8a9a6a', marginBottom: '4px' }}>{selectedOp.op.operation_types?.name}</div>
-          <div style={{ fontSize: '13px', color: '#6b7a5a', marginBottom: '14px' }}>
-            {new Date(selectedOp.op.date + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
-          </div>
-          {selectedOp.op.notes && <div style={{ fontSize: '12px', color: '#6b7a5a', marginBottom: '14px', fontStyle: 'italic' }}>{selectedOp.op.notes}</div>}
-          <div style={{ display: 'flex', gap: '8px' }}>
-            <button onClick={() => { setEditOp(selectedOp.op); setSelectedOp(null) }} style={{ padding: isMobile ? '10px 16px' : '7px 14px', backgroundColor: '#1a2a3a', border: 'none', color: '#aac8ff', borderRadius: '4px', cursor: 'pointer', fontSize: isMobile ? '14px' : '13px', flex: 1 }}>Edit</button>
-            <button onClick={handleDelete} disabled={deleting} style={{ padding: isMobile ? '10px 16px' : '7px 14px', backgroundColor: '#6b1a1a', border: 'none', color: '#ffaaaa', borderRadius: '4px', cursor: 'pointer', fontSize: isMobile ? '14px' : '13px', flex: 1 }}>{deleting ? '...' : 'Delete'}</button>
-            <button onClick={() => setSelectedOp(null)} style={{ padding: isMobile ? '10px 16px' : '7px 14px', background: 'none', border: '1px solid #2a3020', color: '#6b7a5a', borderRadius: '4px', cursor: 'pointer', fontSize: isMobile ? '14px' : '13px', flex: 1 }}>Cancel</button>
-          </div>
+        <div onClick={e => e.stopPropagation()} style={{ position: 'fixed', left: '50%', top: '50%', transform: 'translate(-50%, -50%)', backgroundColor: '#111612', border: `1px solid ${hideStep === 2 ? '#8b3a0a' : hideStep === 1 ? '#5a4800' : '#2a3020'}`, borderRadius: '8px', padding: '20px', zIndex: 999, minWidth: '260px', width: isMobile ? '88vw' : 'auto', maxWidth: '380px', boxShadow: '0 4px 24px rgba(0,0,0,0.6)' }}>
+          {renderPopupContent()}
         </div>
       )}
 
