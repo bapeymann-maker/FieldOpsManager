@@ -176,6 +176,9 @@ export default function Home() {
   const [certEdit, setCertEdit] = useState({ status: '', transition_start: '', expiry: '', notes: '' })
   const [savingCert, setSavingCert] = useState(false)
   const [showMenu, setShowMenu] = useState(false)
+  const [showMenu, setShowMenu] = useState(false)
+  const [syncing, setSyncing] = useState(false)
+  const [syncMsg, setSyncMsg] = useState('')
 
   const today = now.getDate()
   const currentMonth = now.getMonth()
@@ -668,10 +671,32 @@ export default function Home() {
 
       {!isMobile && (
         <div style={{ padding: '10px 32px', backgroundColor: '#0a1208', borderBottom: '1px solid #2a3020', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <span style={{ fontSize: '12px', color: '#6b7a5a' }}>John Deere Operations Center</span>
-          <a href="/api/auth/jd" style={{ padding: '5px 14px', backgroundColor: '#367c2b', color: '#fff', borderRadius: '4px', fontSize: '12px', textDecoration: 'none' }}>Connect John Deere</a>
-        </div>
-      )}
+         <span style={{ fontSize: '12px', color: '#6b7a5a' }}>John Deere Operations Center</span>
+         <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+          <button
+           onClick={async () => {
+            setSyncing(true)
+            setSyncMsg('')
+            try {
+              const res = await fetch('/api/jd/sync')
+              const data = await res.json()
+              setSyncMsg(data.message || 'Sync complete')
+            } catch (e) {
+              setSyncMsg('Sync failed')
+            }
+            setSyncing(false)
+            setTimeout(() => setSyncMsg(''), 5000)
+            loadData()
+          }}
+          disabled={syncing}
+          style={{ padding: '5px 14px', backgroundColor: syncing ? '#1a3a1a' : '#2a5a2a', border: '1px solid #367c2b', color: syncing ? '#6b9a6b' : '#c8d4a0', borderRadius: '4px', fontSize: '12px', cursor: syncing ? 'default' : 'pointer' }}>
+          {syncing ? 'Syncing...' : '↻ Sync Now'}
+        </button>
+        {syncMsg && <span style={{ fontSize: '11px', color: '#8a9a6a' }}>{syncMsg}</span>}
+        <a href="/api/auth/jd" style={{ padding: '5px 14px', backgroundColor: '#367c2b', color: '#fff', borderRadius: '4px', fontSize: '12px', textDecoration: 'none' }}>Connect John Deere</a>
+      </div>
+    </div>
+  )}
 
       {!loading && acresSummary.length > 0 && view !== 'log' && view !== 'cert' && view !== 'weed' && (
         <div style={{ padding: isMobile ? '8px 16px' : '12px 32px', borderBottom: '1px solid #2a3020', display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap', backgroundColor: '#0c1410' }}>
