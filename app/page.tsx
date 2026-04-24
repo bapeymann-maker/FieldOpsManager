@@ -7,6 +7,7 @@ import { useRouter } from 'next/navigation'
 import { getFields, getOperationTypes } from '@/lib/data'
 import { supabase as supabaseClient } from '@/lib/supabase'
 import AddOperationModal from '@/components/AddOperationModal'
+import FieldAnalysis from '@/components/FieldAnalysis'
 
 const FieldMap = dynamic(() => import('@/components/FieldMap'), { ssr: false })
 
@@ -178,6 +179,7 @@ export default function Home() {
   const [showMenu, setShowMenu] = useState(false)
   const [syncing, setSyncing] = useState(false)
   const [syncMsg, setSyncMsg] = useState('')
+  const [analysisField, setAnalysisField] = useState<Field | null>(null)
 
   const today = now.getDate()
   const currentMonth = now.getMonth()
@@ -528,28 +530,29 @@ export default function Home() {
     fontSize: '9px', color: hasData ? '#aad4ff' : '#2a3020',
   })
 
-  function FieldNameCell({ field }: { field: Field }) {
-    const meta = fieldMetaMap[field.id]
-    return (
-      <>
-        <span onClick={e => { e.stopPropagation(); goToFieldOnMap(field.id) }}
-          style={{ cursor: 'pointer', borderBottom: '1px dotted #4a5a3a', color: '#a8b888' }}
-          title="View on heat map">{field.name}</span>
-        <span style={{ fontSize: '9px', color: '#6b7a5a', marginLeft: '5px' }}>{certBadge(field.cert_status)}</span>
-        {field.acres && <span style={{ fontSize: '10px', color: '#4a5a3a', marginLeft: '4px' }}>{field.acres}ac</span>}
-        {meta?.isInCrop && meta.gduSinceLastTillage !== undefined && (
-          <span style={{ fontSize: '9px', color: '#cc8800', marginLeft: '5px' }} title="GDUs since last tillage">
-            {meta.gduSinceLastTillage}↑
-          </span>
-        )}
-        {meta?.isInCrop && meta.rainfallSinceLastTillage !== undefined && meta.rainfallSinceLastTillage > 0 && (
-          <span style={{ fontSize: '9px', color: '#6aaa6a', marginLeft: '3px' }} title="Rainfall since last tillage">
-            {meta.rainfallSinceLastTillage}"
-          </span>
-        )}
-      </>
-    )
-  }
+ function FieldNameCell({ field }: { field: Field }) {
+  const meta = fieldMetaMap[field.id]
+  return (
+    <>
+      <span
+        onClick={e => { e.stopPropagation(); setAnalysisField(field) }}
+        style={{ cursor: 'pointer', borderBottom: '1px dotted #4a5a3a', color: '#a8b888' }}
+        title="Click for field analysis">{field.name}</span>
+      <span style={{ fontSize: '9px', color: '#6b7a5a', marginLeft: '5px' }}>{certBadge(field.cert_status)}</span>
+      {field.acres && <span style={{ fontSize: '10px', color: '#4a5a3a', marginLeft: '4px' }}>{field.acres}ac</span>}
+      {meta?.isInCrop && meta.gduSinceLastTillage !== undefined && (
+        <span style={{ fontSize: '9px', color: '#cc8800', marginLeft: '5px' }} title="GDUs since last tillage">
+          {meta.gduSinceLastTillage}↑
+        </span>
+      )}
+      {meta?.isInCrop && meta.rainfallSinceLastTillage !== undefined && meta.rainfallSinceLastTillage > 0 && (
+        <span style={{ fontSize: '9px', color: '#6aaa6a', marginLeft: '3px' }} title="Rainfall since last tillage">
+          {meta.rainfallSinceLastTillage}"
+        </span>
+      )}
+    </>
+  )
+}
 
   const certTotals = CERT_GROUPS.map(g => {
     const groupFields = fields.filter(f => (f.cert_status || 'Conventional') === g.key && f.client !== 'LB Pork')
@@ -1187,6 +1190,7 @@ export default function Home() {
       {showModal && <AddOperationModal fields={fields} opTypes={opTypes} onClose={() => setShowModal(false)} onSaved={onSaved} />}
       {editOp && <AddOperationModal fields={fields} opTypes={opTypes} onClose={() => setEditOp(null)} onSaved={onSaved}
         editOperation={{ id: editOp.id, field_id: editOp.field_id, operation_type_id: editOp.operation_type_id, date: editOp.date, notes: editOp.notes || '' }} />}
+      {analysisField && <FieldAnalysis field={analysisField} onClose={() => setAnalysisField(null)} />}
     </div>
   )
 }
