@@ -538,6 +538,10 @@ export default function Home() {
         onClick={e => { e.stopPropagation(); setAnalysisField(field) }}
         style={{ cursor: 'pointer', borderBottom: '1px dotted #4a5a3a', color: '#a8b888' }}
         title="Click for field analysis">{field.name}</span>
+      <span
+        onClick={e => { e.stopPropagation(); goToFieldOnMap(field.id) }}
+        style={{ fontSize: '9px', color: '#3a5a3a', marginLeft: '4px', cursor: 'pointer' }}
+        title="View on heat map">⬡</span>
       <span style={{ fontSize: '9px', color: '#6b7a5a', marginLeft: '5px' }}>{certBadge(field.cert_status)}</span>
       {field.acres && <span style={{ fontSize: '10px', color: '#4a5a3a', marginLeft: '4px' }}>{field.acres}ac</span>}
       {meta?.isInCrop && meta.gduSinceLastTillage !== undefined && (
