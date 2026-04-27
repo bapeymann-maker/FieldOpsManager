@@ -393,10 +393,10 @@ export default function Home() {
     else loadData()
   }
 
-  function getOperation(fieldId: string, day: number) {
-    const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`
-    return operations.find(op => op.field_id === fieldId && op.date === dateStr) || null
-  }
+  function getOperations(fieldId: string, day: number) {
+  const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+  return operations.filter(op => op.field_id === fieldId && op.date === dateStr)
+}
 
   function getOpsForMonth(fieldId: string, m: number) {
     return allYearOps.filter(op => new Date(op.date + 'T12:00:00').getMonth() === m && op.field_id === fieldId)
@@ -1128,18 +1128,20 @@ export default function Home() {
                           <FieldNameCell field={field} />
                         </td>
                         {days.map(day => {
-                          const op = getOperation(field.id, day)
+                          const ops = getOperations(field.id, day)
                           const isToday = day === today && month === currentMonth && year === currentYear
                           const weekend = isWeekend(year, month, day)
                           return (
                             <td key={day} style={{ padding: '3px 2px', textAlign: 'center', borderBottom: '1px solid #1a2016', borderLeft: isToday ? '2px solid #c8d4a04a' : undefined, backgroundColor: weekend ? '#0d1009' : undefined }}>
-                              {op && (
-                                <div onClick={e => { e.stopPropagation(); setHideStep(0); setSelectedOp({ op, fieldName: field.name }) }}
-                                  title={op.operation_types?.name}
-                                  style={{ backgroundColor: op.operation_types?.color || '#666', color: '#fff', width: '28px', height: '22px', borderRadius: '3px', margin: '0 auto', fontSize: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', fontWeight: 'bold' }}>
-                                  {OP_ABBREV[op.operation_types?.name || ''] || op.operation_types?.name?.slice(0, 2).toUpperCase() || '?'}
-                                </div>
-                              )}
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', alignItems: 'center' }}>
+                                {ops.map(op => (
+                                  <div key={op.id} onClick={e => { e.stopPropagation(); setHideStep(0); setSelectedOp({ op, fieldName: field.name }) }}
+                                    title={op.operation_types?.name}
+                                    style={{ backgroundColor: op.operation_types?.color || '#666', color: '#fff', width: '28px', height: '22px', borderRadius: '3px', margin: '0 auto', fontSize: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', fontWeight: 'bold' }}>
+                                    {OP_ABBREV[op.operation_types?.name || ''] || op.operation_types?.name?.slice(0, 2).toUpperCase() || '?'}
+                                  </div>
+                                ))}
+                              </div>
                             </td>
                           )
                         })}
