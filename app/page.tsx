@@ -180,6 +180,7 @@ export default function Home() {
   const [deleting, setDeleting] = useState(false)
   const [isMobile, setIsMobile] = useState(false)
   const [collapsedSections, setCollapsedSections] = useState<Record<string, boolean>>({})
+  const [hideConv, setHideConv] = useState<Record<string, boolean>>({})
   const [focusFieldId, setFocusFieldId] = useState<string | null>(null)
   const [editingField, setEditingField] = useState<Field | null>(null)
   const [certEdit, setCertEdit] = useState({ status: '', transition_start: '', expiry: '', notes: '' })
@@ -197,50 +198,29 @@ export default function Home() {
   const monthName = new Date(year, month).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
 
   function closePopup() { setSelectedOp(null); setHideStep(0) }
-
-  function toggleSection(label: string) {
-    setCollapsedSections(prev => ({ ...prev, [label]: !prev[label] }))
-  }
-
-  function goToFieldOnMap(fieldId: string) {
-    setFocusFieldId(fieldId)
-    setView('map')
-  }
+  function toggleSection(label: string) { setCollapsedSections(prev => ({ ...prev, [label]: !prev[label] })) }
+  function toggleHideConv(label: string) { setHideConv(prev => ({ ...prev, [label]: !prev[label] })) }
+  function goToFieldOnMap(fieldId: string) { setFocusFieldId(fieldId); setView('map') }
 
   function openCertEdit(field: Field) {
     setEditingField(field)
-    setCertEdit({
-      status: field.cert_status || 'Conventional',
-      transition_start: field.cert_transition_start || '',
-      expiry: field.cert_expiry || '',
-      notes: field.cert_notes || ''
-    })
+    setCertEdit({ status: field.cert_status || 'Conventional', transition_start: field.cert_transition_start || '', expiry: field.cert_expiry || '', notes: field.cert_notes || '' })
   }
 
   async function saveCert() {
     if (!editingField) return
     setSavingCert(true)
-    await supabase.from('fields').update({
-      cert_status: certEdit.status,
-      cert_transition_start: certEdit.transition_start || null,
-      cert_expiry: certEdit.expiry || null,
-      cert_notes: certEdit.notes || null
-    }).eq('id', editingField.id)
-    setSavingCert(false)
-    setEditingField(null)
-    loadData()
+    await supabase.from('fields').update({ cert_status: certEdit.status, cert_transition_start: certEdit.transition_start || null, cert_expiry: certEdit.expiry || null, cert_notes: certEdit.notes || null }).eq('id', editingField.id)
+    setSavingCert(false); setEditingField(null); loadData()
   }
 
   async function handleSyncNow() {
-    setSyncing(true)
-    setSyncMsg('')
+    setSyncing(true); setSyncMsg('')
     try {
       const res = await fetch('/api/jd/sync')
       const data = await res.json()
       setSyncMsg(data.message || 'Sync complete')
-    } catch (e) {
-      setSyncMsg('Sync failed')
-    }
+    } catch (e) { setSyncMsg('Sync failed') }
     setSyncing(false)
     setTimeout(() => setSyncMsg(''), 5000)
     if (view === 'year') loadYearData()
@@ -250,14 +230,11 @@ export default function Home() {
 
   useEffect(() => {
     const check = () => setIsMobile(window.innerWidth < 768)
-    check()
-    window.addEventListener('resize', check)
+    check(); window.addEventListener('resize', check)
     return () => window.removeEventListener('resize', check)
   }, [])
 
-  useEffect(() => {
-    if (isMobile && view === 'calendar') setView('log')
-  }, [isMobile])
+  useEffect(() => { if (isMobile && view === 'calendar') setView('log') }, [isMobile])
 
   async function loadData() {
     setLoading(true)
@@ -268,11 +245,8 @@ export default function Home() {
       const { data: opsRaw } = await supabaseClient.from('operations').select('*, fields(name), operation_types(name, color)').gte('date', startDate).lte('date', endDate)
       const { data: allOpsRaw } = await supabaseClient.from('operations').select('*, operation_types(name, color)').order('date', { ascending: false })
       const { data: gduRaw } = await supabaseClient.from('gdu_daily').select('*').gte('date', `${year}-01-01`).lte('date', `${year}-12-31`)
-      setFields(fieldsData || [])
-      setOperations((opsRaw || []).filter((op: Operation) => !op.hidden))
-      setAllOps((allOpsRaw || []).filter((op: Operation) => !op.hidden))
-      setOpTypes(opTypesData || [])
-      setGduData(gduRaw || [])
+      setFields(fieldsData || []); setOperations((opsRaw || []).filter((op: Operation) => !op.hidden))
+      setAllOps((allOpsRaw || []).filter((op: Operation) => !op.hidden)); setOpTypes(opTypesData || []); setGduData(gduRaw || [])
     } catch (err) { console.error(err) }
     setLoading(false)
   }
@@ -284,11 +258,8 @@ export default function Home() {
       const { data: opsRaw } = await supabaseClient.from('operations').select('*, fields(name), operation_types(name, color)').gte('date', `${year}-01-01`).lte('date', `${year}-12-31`)
       const { data: allOpsRaw } = await supabaseClient.from('operations').select('*, operation_types(name, color)').order('date', { ascending: false })
       const { data: gduRaw } = await supabaseClient.from('gdu_daily').select('*').gte('date', `${year}-01-01`).lte('date', `${year}-12-31`)
-      setFields(fieldsData || [])
-      setAllYearOps((opsRaw || []).filter((op: Operation) => !op.hidden))
-      setAllOps((allOpsRaw || []).filter((op: Operation) => !op.hidden))
-      setOpTypes(opTypesData || [])
-      setGduData(gduRaw || [])
+      setFields(fieldsData || []); setAllYearOps((opsRaw || []).filter((op: Operation) => !op.hidden))
+      setAllOps((allOpsRaw || []).filter((op: Operation) => !op.hidden)); setOpTypes(opTypesData || []); setGduData(gduRaw || [])
     } catch (err) { console.error(err) }
     setLoading(false)
   }
@@ -300,11 +271,8 @@ export default function Home() {
       const { data: opsRaw } = await supabaseClient.from('operations').select('*, fields(name), operation_types(name, color)').order('date', { ascending: false }).limit(100)
       const { data: allOpsRaw } = await supabaseClient.from('operations').select('*, operation_types(name, color)').order('date', { ascending: false })
       const { data: gduRaw } = await supabaseClient.from('gdu_daily').select('*').gte('date', `${currentYear}-01-01`)
-      setFields(fieldsData || [])
-      setOperations((opsRaw || []).filter((op: Operation) => !op.hidden))
-      setAllOps((allOpsRaw || []).filter((op: Operation) => !op.hidden))
-      setOpTypes(opTypesData || [])
-      setGduData(gduRaw || [])
+      setFields(fieldsData || []); setOperations((opsRaw || []).filter((op: Operation) => !op.hidden))
+      setAllOps((allOpsRaw || []).filter((op: Operation) => !op.hidden)); setOpTypes(opTypesData || []); setGduData(gduRaw || [])
     } catch (err) { console.error(err) }
     setLoading(false)
   }
@@ -322,7 +290,6 @@ export default function Home() {
     const totalAcres = uniqueFieldIds.reduce((sum, fid) => sum + (fields.find(f => f.id === fid)?.acres || 0), 0)
     return { ...ot, totalAcres, count: opsOfType.length }
   }).filter(s => s.count > 0)
-
   const totalAcresWorked = acresSummary.reduce((sum, s) => sum + s.totalAcres, 0)
 
   function getCumulativeGDUForDay(day: number, region: 'North' | 'South') {
@@ -373,32 +340,22 @@ export default function Home() {
     return Math.round(monthRecords.reduce((sum, g) => sum + g.daily_gdu, 0) / regionFieldIds.length * 10) / 10
   }
 
-  async function handleSignOut() {
-    await supabase.auth.signOut()
-    router.push('/login')
-    router.refresh()
-  }
+  async function handleSignOut() { await supabase.auth.signOut(); router.push('/login'); router.refresh() }
 
   async function handleDelete() {
     if (!selectedOp) return
     setDeleting(true)
     await supabase.from('operations').delete().eq('id', selectedOp.op.id)
-    closePopup()
-    setDeleting(false)
-    if (view === 'year') loadYearData()
-    else if (view === 'log') loadLogData()
-    else loadData()
+    closePopup(); setDeleting(false)
+    if (view === 'year') loadYearData(); else if (view === 'log') loadLogData(); else loadData()
   }
 
   async function handleHide() {
     if (!selectedOp) return
     setHiding(true)
     await supabase.from('operations').update({ hidden: true }).eq('id', selectedOp.op.id)
-    closePopup()
-    setHiding(false)
-    if (view === 'year') loadYearData()
-    else if (view === 'log') loadLogData()
-    else loadData()
+    closePopup(); setHiding(false)
+    if (view === 'year') loadYearData(); else if (view === 'log') loadLogData(); else loadData()
   }
 
   function getOperations(fieldId: string, day: number) {
@@ -410,13 +367,8 @@ export default function Home() {
     return allYearOps.filter(op => new Date(op.date + 'T12:00:00').getMonth() === m && op.field_id === fieldId)
   }
 
-  function prevMonth() {
-    if (month === 0) { setMonth(11); setYear(y => y - 1) } else setMonth(m => m - 1)
-  }
-
-  function nextMonth() {
-    if (month === 11) { setMonth(0); setYear(y => y + 1) } else setMonth(m => m + 1)
-  }
+  function prevMonth() { if (month === 0) { setMonth(11); setYear(y => y - 1) } else setMonth(m => m - 1) }
+  function nextMonth() { if (month === 11) { setMonth(0); setYear(y => y + 1) } else setMonth(m => m + 1) }
 
   function exportToCSV() {
     if (activeOps.length === 0) return
@@ -427,18 +379,13 @@ export default function Home() {
     const csv = [['Date', 'Field', 'Region', 'Client', 'Cert Status', 'Acres', 'Operation Type', 'Notes', 'Source'], ...rows].map(r => r.map(v => `"${v}"`).join(',')).join('\n')
     const blob = new Blob([csv], { type: 'text/csv' })
     const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
+    const a = document.createElement('a'); a.href = url
     a.download = `field-ops-${view === 'year' ? year : `${year}-${String(month + 1).padStart(2, '0')}`}.csv`
-    a.click()
-    URL.revokeObjectURL(url)
+    a.click(); URL.revokeObjectURL(url)
   }
 
   const fieldsWithHeat = fields.map(f => {
-    const fieldOps = allOps
-      .filter(op => op.field_id === f.id && op.date >= `${currentYear}-01-01`)
-      .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
-
+    const fieldOps = allOps.filter(op => op.field_id === f.id && op.date >= `${currentYear}-01-01`).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
     const latest = fieldOps[0]
     const daysSinceWork = latest ? daysSince(latest.date) : undefined
     const lastOpType = latest?.operation_types?.name || ''
@@ -447,13 +394,11 @@ export default function Home() {
     const isInCrop = lastSeeding ? (!lastHarvest || new Date(lastSeeding.date) > new Date(lastHarvest.date)) : false
     const seedingDate = lastSeeding?.date
     const cropType = normalizeCropType(lastSeeding?.crop_type || lastSeeding?.notes || null)
-
     const fieldGDU = seedingDate ? gduData.filter(g => g.field_id === f.id && g.date >= seedingDate) : []
     const sortedGDU = [...fieldGDU].sort((a, b) => b.date.localeCompare(a.date))
     const latestGDU = sortedGDU[0]
     const cumulativeGDU = latestGDU?.cumulative_gdu
     const cumulativeRainfall = latestGDU?.cumulative_rainfall
-
     let gduSinceLastWork: number | undefined
     let rainfallSinceLastWork: number | undefined
     if (latest && daysSinceWork !== undefined && daysSinceWork > 0 && isInCrop && seedingDate) {
@@ -466,7 +411,6 @@ export default function Home() {
         rainfallSinceLastWork = rs > 0 ? Math.round(rs * 100) / 100 : undefined
       }
     }
-
     const lastTillageOp = fieldOps.find(op => TILLAGE_OP_NAMES.has(op.operation_types?.name || ''))
     let gduSinceLastTillage: number | undefined
     let rainfallSinceLastTillage: number | undefined
@@ -474,31 +418,20 @@ export default function Home() {
     if (lastTillageOp && isInCrop && seedingDate) {
       const lastTillageDate = lastTillageOp.date
       lastTillageOpName = lastTillageOp.operation_types?.name
-      // Only count tillage that happened AFTER seeding (not same day pre-plant tillage)
       if (lastTillageDate > seedingDate) {
         const recsSince = fieldGDU.filter(g => g.date > lastTillageDate)
         gduSinceLastTillage = Math.round(recsSince.reduce((s, g) => s + g.daily_gdu, 0))
         rainfallSinceLastTillage = Math.round(recsSince.reduce((s, g) => s + (g.rainfall_inches || 0), 0) * 100) / 100
       }
     }
-
-    return {
-      ...f, daysSinceWork, isInCrop, lastOpType, cumulativeGDU, cumulativeRainfall,
-      gduSinceLastWork, rainfallSinceLastWork,
-      gduSinceLastTillage, rainfallSinceLastTillage, lastTillageOpName,
-      cropType, seedingDate
-    }
+    return { ...f, daysSinceWork, isInCrop, lastOpType, cumulativeGDU, cumulativeRainfall, gduSinceLastWork, rainfallSinceLastWork, gduSinceLastTillage, rainfallSinceLastTillage, lastTillageOpName, cropType, seedingDate }
   })
 
   const heatMapFields = mapMode === 'daily' ? fieldsWithHeat.filter(f => f.isInCrop) : fieldsWithHeat
 
   const fieldMetaMap: Record<string, { gduSinceLastTillage?: number; rainfallSinceLastTillage?: number; isInCrop: boolean }> = {}
   for (const f of fieldsWithHeat) {
-    fieldMetaMap[f.id] = {
-      gduSinceLastTillage: f.gduSinceLastTillage,
-      rainfallSinceLastTillage: f.rainfallSinceLastTillage,
-      isInCrop: f.isInCrop
-    }
+    fieldMetaMap[f.id] = { gduSinceLastTillage: f.gduSinceLastTillage, rainfallSinceLastTillage: f.rainfallSinceLastTillage, isInCrop: f.isInCrop }
   }
 
   function getForecastDate(currentGDU: number, targetGDU: number, fieldId: string): string {
@@ -509,17 +442,14 @@ export default function Home() {
       const daysNeeded = Math.ceil((targetGDU - currentGDU) / avgDaily)
       if (daysNeeded <= 0) return 'Now'
       if (daysNeeded > 90) return '90+ days'
-      const date = new Date()
-      date.setDate(date.getDate() + daysNeeded)
+      const date = new Date(); date.setDate(date.getDate() + daysNeeded)
       return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
     } catch (e) { return 'Unknown' }
   }
 
   const onSaved = () => {
     setShowModal(false); setEditOp(null)
-    if (view === 'year') loadYearData()
-    else if (view === 'log') loadLogData()
-    else loadData()
+    if (view === 'year') loadYearData(); else if (view === 'log') loadLogData(); else loadData()
   }
 
   const sectionHeaderStyle = {
@@ -529,37 +459,22 @@ export default function Home() {
     display: 'flex', alignItems: 'center', gap: '8px'
   }
 
-  const gduCellStyle = (hasData: boolean) => ({
-    padding: '2px 2px', textAlign: 'center' as const,
-    fontSize: '9px', color: hasData ? '#6aaa6a' : '#2a3020', borderTop: '1px solid #1a2016'
-  })
-
-  const cumulCellStyle = (hasData: boolean) => ({
-    padding: '2px 2px', textAlign: 'center' as const,
-    fontSize: '9px', color: hasData ? '#aad4ff' : '#2a3020',
-  })
+  const gduCellStyle = (hasData: boolean) => ({ padding: '2px 2px', textAlign: 'center' as const, fontSize: '9px', color: hasData ? '#6aaa6a' : '#2a3020', borderTop: '1px solid #1a2016' })
+  const cumulCellStyle = (hasData: boolean) => ({ padding: '2px 2px', textAlign: 'center' as const, fontSize: '9px', color: hasData ? '#aad4ff' : '#2a3020' })
 
   function FieldNameCell({ field }: { field: Field }) {
     const meta = fieldMetaMap[field.id]
     return (
       <>
-        <span onClick={e => { e.stopPropagation(); setAnalysisField(field) }}
-          style={{ cursor: 'pointer', borderBottom: '1px dotted #4a5a3a', color: '#a8b888' }}
-          title="Click for field analysis">{field.name}</span>
-        <span onClick={e => { e.stopPropagation(); goToFieldOnMap(field.id) }}
-          style={{ fontSize: '9px', color: '#3a5a3a', marginLeft: '4px', cursor: 'pointer' }}
-          title="View on heat map">⬡</span>
+        <span onClick={e => { e.stopPropagation(); setAnalysisField(field) }} style={{ cursor: 'pointer', borderBottom: '1px dotted #4a5a3a', color: '#a8b888' }} title="Click for field analysis">{field.name}</span>
+        <span onClick={e => { e.stopPropagation(); goToFieldOnMap(field.id) }} style={{ fontSize: '9px', color: '#3a5a3a', marginLeft: '4px', cursor: 'pointer' }} title="View on heat map">⬡</span>
         <span style={{ fontSize: '9px', color: '#6b7a5a', marginLeft: '5px' }}>{certBadge(field.cert_status)}</span>
         {field.acres && <span style={{ fontSize: '10px', color: '#4a5a3a', marginLeft: '4px' }}>{field.acres}ac</span>}
         {meta?.isInCrop && meta.gduSinceLastTillage !== undefined && (
-          <span style={{ fontSize: '9px', color: '#cc8800', marginLeft: '5px' }} title="GDUs since last tillage">
-            {meta.gduSinceLastTillage}↑
-          </span>
+          <span style={{ fontSize: '9px', color: '#cc8800', marginLeft: '5px' }} title="GDUs since last tillage">{meta.gduSinceLastTillage}↑</span>
         )}
         {meta?.isInCrop && meta.rainfallSinceLastTillage !== undefined && meta.rainfallSinceLastTillage > 0 && (
-          <span style={{ fontSize: '9px', color: '#6aaa6a', marginLeft: '3px' }} title="Rainfall since last tillage">
-            {meta.rainfallSinceLastTillage}"
-          </span>
+          <span style={{ fontSize: '9px', color: '#6aaa6a', marginLeft: '3px' }} title="Rainfall since last tillage">{meta.rainfallSinceLastTillage}"</span>
         )}
       </>
     )
@@ -570,7 +485,6 @@ export default function Home() {
     return { ...g, count: groupFields.length, totalAcres: groupFields.reduce((sum, f) => sum + (f.acres || 0), 0) }
   })
 
-  // Exclude conventional fields from weed page
   const weedingFields = fieldsWithHeat.filter(f =>
     f.isInCrop && f.cumulativeGDU !== undefined && f.client !== 'LB Pork' &&
     (f.region === 'North' || f.region === 'South') &&
@@ -585,45 +499,30 @@ export default function Home() {
     const opDate = new Date(op.date + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
     const opName = op.operation_types?.name || 'Operation'
     const isJD = op.source === 'john_deere'
-
-    if (hideStep === 2) {
-      return (
-        <>
-          <div style={{ fontSize: '13px', color: '#ffaa44', marginBottom: '6px', fontWeight: 'bold' }}>⚠ Final Confirmation</div>
-          <div style={{ fontSize: '12px', color: '#c8d4a0', marginBottom: '4px' }}>{selectedOp.fieldName}</div>
-          <div style={{ fontSize: '12px', color: '#8a9a6a', marginBottom: '4px' }}>{opName} — {opDate}</div>
-          <div style={{ fontSize: '12px', color: '#cc6644', marginBottom: '16px', padding: '10px 12px', backgroundColor: '#1a0f0a', borderRadius: '4px', border: '1px solid #cc664433' }}>
-            This operation will be hidden from all views. It is not deleted and can be restored directly in the database if needed.
-          </div>
-          <div style={{ display: 'flex', gap: '8px' }}>
-            <button onClick={handleHide} disabled={hiding} style={{ padding: isMobile ? '10px 16px' : '7px 14px', backgroundColor: '#8b3a0a', border: 'none', color: '#ffccaa', borderRadius: '4px', cursor: 'pointer', fontSize: isMobile ? '14px' : '13px', flex: 1, fontWeight: 'bold' }}>
-              {hiding ? 'Hiding...' : 'Yes, Hide It'}
-            </button>
-            <button onClick={() => setHideStep(0)} style={{ padding: isMobile ? '10px 16px' : '7px 14px', background: 'none', border: '1px solid #2a3020', color: '#6b7a5a', borderRadius: '4px', cursor: 'pointer', fontSize: isMobile ? '14px' : '13px', flex: 1 }}>Cancel</button>
-          </div>
-        </>
-      )
-    }
-
-    if (hideStep === 1) {
-      return (
-        <>
-          <div style={{ fontSize: '13px', color: '#cc8800', marginBottom: '6px', fontWeight: 'bold' }}>⚠ Hide this operation?</div>
-          <div style={{ fontSize: '12px', color: '#c8d4a0', marginBottom: '4px' }}>{selectedOp.fieldName}</div>
-          <div style={{ fontSize: '12px', color: '#8a9a6a', marginBottom: '4px' }}>{opName} — {opDate}</div>
-          <div style={{ fontSize: '12px', color: '#8a9a6a', marginBottom: '16px', padding: '10px 12px', backgroundColor: '#1a1408', borderRadius: '4px', border: '1px solid #cc880033' }}>
-            Hiding removes this entry from the calendar and all views. Use this for test operations or equipment checks that did not represent actual field work.
-          </div>
-          <div style={{ display: 'flex', gap: '8px' }}>
-            <button onClick={() => setHideStep(2)} style={{ padding: isMobile ? '10px 16px' : '7px 14px', backgroundColor: '#5a3800', border: '1px solid #cc8800', color: '#ffcc66', borderRadius: '4px', cursor: 'pointer', fontSize: isMobile ? '14px' : '13px', flex: 1 }}>
-              Continue →
-            </button>
-            <button onClick={() => setHideStep(0)} style={{ padding: isMobile ? '10px 16px' : '7px 14px', background: 'none', border: '1px solid #2a3020', color: '#6b7a5a', borderRadius: '4px', cursor: 'pointer', fontSize: isMobile ? '14px' : '13px', flex: 1 }}>Cancel</button>
-          </div>
-        </>
-      )
-    }
-
+    if (hideStep === 2) return (
+      <>
+        <div style={{ fontSize: '13px', color: '#ffaa44', marginBottom: '6px', fontWeight: 'bold' }}>⚠ Final Confirmation</div>
+        <div style={{ fontSize: '12px', color: '#c8d4a0', marginBottom: '4px' }}>{selectedOp.fieldName}</div>
+        <div style={{ fontSize: '12px', color: '#8a9a6a', marginBottom: '4px' }}>{opName} — {opDate}</div>
+        <div style={{ fontSize: '12px', color: '#cc6644', marginBottom: '16px', padding: '10px 12px', backgroundColor: '#1a0f0a', borderRadius: '4px', border: '1px solid #cc664433' }}>This operation will be hidden from all views. It is not deleted and can be restored directly in the database if needed.</div>
+        <div style={{ display: 'flex', gap: '8px' }}>
+          <button onClick={handleHide} disabled={hiding} style={{ padding: isMobile ? '10px 16px' : '7px 14px', backgroundColor: '#8b3a0a', border: 'none', color: '#ffccaa', borderRadius: '4px', cursor: 'pointer', fontSize: isMobile ? '14px' : '13px', flex: 1, fontWeight: 'bold' }}>{hiding ? 'Hiding...' : 'Yes, Hide It'}</button>
+          <button onClick={() => setHideStep(0)} style={{ padding: isMobile ? '10px 16px' : '7px 14px', background: 'none', border: '1px solid #2a3020', color: '#6b7a5a', borderRadius: '4px', cursor: 'pointer', fontSize: isMobile ? '14px' : '13px', flex: 1 }}>Cancel</button>
+        </div>
+      </>
+    )
+    if (hideStep === 1) return (
+      <>
+        <div style={{ fontSize: '13px', color: '#cc8800', marginBottom: '6px', fontWeight: 'bold' }}>⚠ Hide this operation?</div>
+        <div style={{ fontSize: '12px', color: '#c8d4a0', marginBottom: '4px' }}>{selectedOp.fieldName}</div>
+        <div style={{ fontSize: '12px', color: '#8a9a6a', marginBottom: '4px' }}>{opName} — {opDate}</div>
+        <div style={{ fontSize: '12px', color: '#8a9a6a', marginBottom: '16px', padding: '10px 12px', backgroundColor: '#1a1408', borderRadius: '4px', border: '1px solid #cc880033' }}>Hiding removes this entry from the calendar and all views. Use this for test operations or equipment checks that did not represent actual field work.</div>
+        <div style={{ display: 'flex', gap: '8px' }}>
+          <button onClick={() => setHideStep(2)} style={{ padding: isMobile ? '10px 16px' : '7px 14px', backgroundColor: '#5a3800', border: '1px solid #cc8800', color: '#ffcc66', borderRadius: '4px', cursor: 'pointer', fontSize: isMobile ? '14px' : '13px', flex: 1 }}>Continue →</button>
+          <button onClick={() => setHideStep(0)} style={{ padding: isMobile ? '10px 16px' : '7px 14px', background: 'none', border: '1px solid #2a3020', color: '#6b7a5a', borderRadius: '4px', cursor: 'pointer', fontSize: isMobile ? '14px' : '13px', flex: 1 }}>Cancel</button>
+        </div>
+      </>
+    )
     return (
       <>
         <div style={{ fontSize: isMobile ? '16px' : '14px', color: '#c8d4a0', marginBottom: '6px', fontWeight: 'bold' }}>{selectedOp.fieldName}</div>
@@ -638,12 +537,32 @@ export default function Home() {
         </div>
         {isJD && (
           <div style={{ marginTop: '10px', paddingTop: '10px', borderTop: '1px solid #1a2016' }}>
-            <button onClick={() => setHideStep(1)} style={{ width: '100%', padding: isMobile ? '10px 16px' : '7px 14px', backgroundColor: 'transparent', border: '1px solid #5a4800', color: '#aa8833', borderRadius: '4px', cursor: 'pointer', fontSize: isMobile ? '13px' : '12px' }}>
-              Hide from calendar (test/equipment check)
-            </button>
+            <button onClick={() => setHideStep(1)} style={{ width: '100%', padding: isMobile ? '10px 16px' : '7px 14px', backgroundColor: 'transparent', border: '1px solid #5a4800', color: '#aa8833', borderRadius: '4px', cursor: 'pointer', fontSize: isMobile ? '13px' : '12px' }}>Hide from calendar (test/equipment check)</button>
           </div>
         )}
       </>
+    )
+  }
+
+  function SectionHeader({ label, colSpan, isLBPork }: { label: string; colSpan: number; isLBPork: boolean }) {
+    const collapsed = collapsedSections[label]
+    const sectionFields = SECTIONS.find(s => s.label === label)?.filter
+    const count = sectionFields ? fields.filter(sectionFields).length : 0
+    return (
+      <tr onClick={() => toggleSection(label)}>
+        <td colSpan={colSpan} style={sectionHeaderStyle}>
+          <span style={{ fontSize: '12px' }}>{collapsed ? '▶' : '▼'}</span>
+          {label}
+          <span style={{ fontSize: '10px', color: '#4a5a3a', marginLeft: '4px' }}>({count})</span>
+          {!isLBPork && (
+            <span
+              onClick={e => { e.stopPropagation(); toggleHideConv(label) }}
+              style={{ marginLeft: 'auto', fontSize: '10px', color: hideConv[label] ? '#cc8800' : '#4a5a3a', cursor: 'pointer', border: `1px solid ${hideConv[label] ? '#cc880066' : '#2a3020'}`, borderRadius: '3px', padding: '1px 7px' }}>
+              {hideConv[label] ? 'CONV hidden' : 'hide CONV'}
+            </span>
+          )}
+        </td>
+      </tr>
     )
   }
 
@@ -656,9 +575,7 @@ export default function Home() {
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
           <div>
             {!isMobile && <div style={{ fontSize: '11px', letterSpacing: '0.2em', color: '#6b7a5a', textTransform: 'uppercase', marginBottom: '4px' }}>Field Operations Manager</div>}
-            <h1 style={{ fontSize: isMobile ? '20px' : '24px', fontWeight: 'normal', margin: 0, color: '#c8d4a0' }}>
-              {isMobile ? 'Field Ops' : 'Activity Calendar'}
-            </h1>
+            <h1 style={{ fontSize: isMobile ? '20px' : '24px', fontWeight: 'normal', margin: 0, color: '#c8d4a0' }}>{isMobile ? 'Field Ops' : 'Activity Calendar'}</h1>
           </div>
           <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
             <button onClick={() => setShowModal(true)} style={{ padding: isMobile ? '10px 18px' : '8px 14px', backgroundColor: '#2d6a2d', border: 'none', color: '#fff', borderRadius: '4px', cursor: 'pointer', fontSize: isMobile ? '15px' : '12px' }}>+ Log</button>
@@ -672,14 +589,12 @@ export default function Home() {
             )}
           </div>
         </div>
-
         {isMobile && showMenu && (
           <div onClick={e => e.stopPropagation()} style={{ backgroundColor: '#111612', border: '1px solid #2a3020', borderRadius: '6px', padding: '8px', marginBottom: '10px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
             <button onClick={() => { exportToCSV(); setShowMenu(false) }} style={{ padding: '10px 16px', background: 'none', border: 'none', color: '#8a9a6a', cursor: 'pointer', fontSize: '14px', textAlign: 'left' }}>↓ Export CSV</button>
             <button onClick={() => { handleSignOut(); setShowMenu(false) }} style={{ padding: '10px 16px', background: 'none', border: 'none', color: '#6b7a5a', cursor: 'pointer', fontSize: '14px', textAlign: 'left' }}>Sign Out</button>
           </div>
         )}
-
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
           <div style={{ display: 'flex', border: '1px solid #2a3020', borderRadius: '4px', overflow: 'hidden' }}>
             {isMobile && <button onClick={() => setView('log')} style={{ padding: '8px 10px', cursor: 'pointer', fontSize: '12px', border: 'none', backgroundColor: view === 'log' ? '#2a3020' : 'transparent', color: view === 'log' ? '#c8d4a0' : '#6b7a5a' }}>Recent</button>}
@@ -707,10 +622,7 @@ export default function Home() {
         <div style={{ padding: '10px 32px', backgroundColor: '#0a1208', borderBottom: '1px solid #2a3020', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <span style={{ fontSize: '12px', color: '#6b7a5a' }}>John Deere Operations Center</span>
           <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-            <button onClick={handleSyncNow} disabled={syncing}
-              style={{ padding: '5px 14px', backgroundColor: syncing ? '#1a3a1a' : '#2a5a2a', border: '1px solid #367c2b', color: syncing ? '#6b9a6b' : '#c8d4a0', borderRadius: '4px', fontSize: '12px', cursor: syncing ? 'default' : 'pointer' }}>
-              {syncing ? 'Syncing...' : '↻ Sync Now'}
-            </button>
+            <button onClick={handleSyncNow} disabled={syncing} style={{ padding: '5px 14px', backgroundColor: syncing ? '#1a3a1a' : '#2a5a2a', border: '1px solid #367c2b', color: syncing ? '#6b9a6b' : '#c8d4a0', borderRadius: '4px', fontSize: '12px', cursor: syncing ? 'default' : 'pointer' }}>{syncing ? 'Syncing...' : '↻ Sync Now'}</button>
             {syncMsg && <span style={{ fontSize: '11px', color: '#8a9a6a' }}>{syncMsg}</span>}
             <a href="/api/auth/jd" style={{ padding: '5px 14px', backgroundColor: '#367c2b', color: '#fff', borderRadius: '4px', fontSize: '12px', textDecoration: 'none' }}>Connect John Deere</a>
           </div>
@@ -729,9 +641,7 @@ export default function Home() {
               </div>
             ))}
           </div>
-          <div style={{ marginLeft: 'auto', fontSize: '12px', color: '#c8d4a0' }}>
-            <strong>{totalAcresWorked.toLocaleString('en-US', { maximumFractionDigits: 0 })} ac</strong>
-          </div>
+          <div style={{ marginLeft: 'auto', fontSize: '12px', color: '#c8d4a0' }}><strong>{totalAcresWorked.toLocaleString('en-US', { maximumFractionDigits: 0 })} ac</strong></div>
         </div>
       )}
 
@@ -804,9 +714,7 @@ export default function Home() {
             if (groupFields.length === 0) return null
             return (
               <div key={g.key} style={{ marginBottom: '28px' }}>
-                <div style={{ fontSize: '11px', letterSpacing: '0.15em', textTransform: 'uppercase', color: g.color, marginBottom: '10px', borderBottom: `1px solid ${g.color}33`, paddingBottom: '6px' }}>
-                  {g.badge} — {g.label} ({groupFields.length})
-                </div>
+                <div style={{ fontSize: '11px', letterSpacing: '0.15em', textTransform: 'uppercase', color: g.color, marginBottom: '10px', borderBottom: `1px solid ${g.color}33`, paddingBottom: '6px' }}>{g.badge} — {g.label} ({groupFields.length})</div>
                 {isMobile ? (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                     {groupFields.map(field => (
@@ -826,31 +734,17 @@ export default function Home() {
                   </div>
                 ) : (
                   <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                    <thead>
-                      <tr>
-                        {['Field', 'Client', 'Acres', 'Trans. Start', 'Cert Expiry', 'Notes', ''].map(h => (
-                          <th key={h} style={{ textAlign: h === 'Acres' ? 'right' : 'left', padding: '6px 12px', fontSize: '10px', color: '#4a5a3a', letterSpacing: '0.1em', textTransform: 'uppercase', borderBottom: '1px solid #1a2016' }}>{h}</th>
-                        ))}
-                      </tr>
-                    </thead>
+                    <thead><tr>{['Field', 'Client', 'Acres', 'Trans. Start', 'Cert Expiry', 'Notes', ''].map(h => (<th key={h} style={{ textAlign: h === 'Acres' ? 'right' : 'left', padding: '6px 12px', fontSize: '10px', color: '#4a5a3a', letterSpacing: '0.1em', textTransform: 'uppercase', borderBottom: '1px solid #1a2016' }}>{h}</th>))}</tr></thead>
                     <tbody>
                       {groupFields.map((field, fi) => (
                         <tr key={field.id} style={{ backgroundColor: fi % 2 === 0 ? '#111612' : '#0f1410' }}>
-                          <td style={{ padding: '8px 12px', fontSize: '13px', color: '#a8b888', borderBottom: '1px solid #1a2016' }}>
-                            <span onClick={() => goToFieldOnMap(field.id)} style={{ cursor: 'pointer', borderBottom: '1px dotted #4a5a3a' }}>{field.name}</span>
-                          </td>
+                          <td style={{ padding: '8px 12px', fontSize: '13px', color: '#a8b888', borderBottom: '1px solid #1a2016' }}><span onClick={() => goToFieldOnMap(field.id)} style={{ cursor: 'pointer', borderBottom: '1px dotted #4a5a3a' }}>{field.name}</span></td>
                           <td style={{ padding: '8px 12px', fontSize: '12px', color: '#6b7a5a', borderBottom: '1px solid #1a2016' }}>{field.client || 'Ufer Farms'}</td>
                           <td style={{ padding: '8px 12px', fontSize: '12px', color: '#6b7a5a', borderBottom: '1px solid #1a2016', textAlign: 'right' }}>{field.acres || '—'}</td>
-                          <td style={{ padding: '8px 12px', fontSize: '12px', color: '#6b7a5a', borderBottom: '1px solid #1a2016' }}>
-                            {field.cert_transition_start ? new Date(field.cert_transition_start + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'}
-                          </td>
-                          <td style={{ padding: '8px 12px', fontSize: '12px', borderBottom: '1px solid #1a2016' }}>
-                            {field.cert_expiry ? <span style={{ color: new Date(field.cert_expiry) < new Date() ? '#ff6b6b' : '#a8b888' }}>{new Date(field.cert_expiry + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</span> : '—'}
-                          </td>
+                          <td style={{ padding: '8px 12px', fontSize: '12px', color: '#6b7a5a', borderBottom: '1px solid #1a2016' }}>{field.cert_transition_start ? new Date(field.cert_transition_start + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'}</td>
+                          <td style={{ padding: '8px 12px', fontSize: '12px', borderBottom: '1px solid #1a2016' }}>{field.cert_expiry ? <span style={{ color: new Date(field.cert_expiry) < new Date() ? '#ff6b6b' : '#a8b888' }}>{new Date(field.cert_expiry + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</span> : '—'}</td>
                           <td style={{ padding: '8px 12px', fontSize: '11px', color: '#6b7a5a', borderBottom: '1px solid #1a2016', fontStyle: 'italic', maxWidth: '200px' }}>{field.cert_notes || '—'}</td>
-                          <td style={{ padding: '8px 12px', borderBottom: '1px solid #1a2016' }}>
-                            <button onClick={() => openCertEdit(field)} style={{ padding: '4px 10px', background: 'none', border: '1px solid #2a3020', color: '#6b7a5a', borderRadius: '4px', cursor: 'pointer', fontSize: '11px' }}>Edit</button>
-                          </td>
+                          <td style={{ padding: '8px 12px', borderBottom: '1px solid #1a2016' }}><button onClick={() => openCertEdit(field)} style={{ padding: '4px 10px', background: 'none', border: '1px solid #2a3020', color: '#6b7a5a', borderRadius: '4px', cursor: 'pointer', fontSize: '11px' }}>Edit</button></td>
                         </tr>
                       ))}
                     </tbody>
@@ -887,20 +781,12 @@ export default function Home() {
             }
             return (
               <div key={region} style={{ marginBottom: '32px' }}>
-                <div style={{ fontSize: '12px', letterSpacing: '0.15em', textTransform: 'uppercase', color: '#8a9a6a', marginBottom: '16px', borderBottom: '1px solid #2a3020', paddingBottom: '8px' }}>
-                  {region}ern Operation — {regionFields.length} fields
-                </div>
+                <div style={{ fontSize: '12px', letterSpacing: '0.15em', textTransform: 'uppercase', color: '#8a9a6a', marginBottom: '16px', borderBottom: '1px solid #2a3020', paddingBottom: '8px' }}>{region}ern Operation — {regionFields.length} fields</div>
                 {Object.entries(cropGroups).map(([cropType, cropFields]) => {
-                  const sorted = [...cropFields].sort((a, b) => {
-                    const pa = a.gduSinceLastTillage ?? a.cumulativeGDU ?? 0
-                    const pb = b.gduSinceLastTillage ?? b.cumulativeGDU ?? 0
-                    return pb - pa
-                  })
+                  const sorted = [...cropFields].sort((a, b) => { const pa = a.gduSinceLastTillage ?? a.cumulativeGDU ?? 0; const pb = b.gduSinceLastTillage ?? b.cumulativeGDU ?? 0; return pb - pa })
                   return (
                     <div key={cropType} style={{ marginBottom: '24px' }}>
-                      <div style={{ fontSize: '11px', color: '#cc8800', letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: '8px' }}>
-                        {cropType} ({cropFields.length} fields)
-                      </div>
+                      <div style={{ fontSize: '11px', color: '#cc8800', letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: '8px' }}>{cropType} ({cropFields.length} fields)</div>
                       {isMobile ? (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                           {sorted.map((f, i) => {
@@ -926,13 +812,7 @@ export default function Home() {
                         </div>
                       ) : (
                         <table style={{ width: '100%', borderCollapse: 'collapse', tableLayout: 'fixed' }}>
-                          <thead>
-                            <tr>
-                              {WEED_COLS.map(({ label, width }) => (
-                                <th key={label} style={{ textAlign: 'left', padding: '5px 10px', fontSize: '10px', color: '#4a5a3a', letterSpacing: '0.1em', textTransform: 'uppercase', borderBottom: '1px solid #1a2016', width, overflow: 'hidden' }}>{label}</th>
-                              ))}
-                            </tr>
-                          </thead>
+                          <thead><tr>{WEED_COLS.map(({ label, width }) => (<th key={label} style={{ textAlign: 'left', padding: '5px 10px', fontSize: '10px', color: '#4a5a3a', letterSpacing: '0.1em', textTransform: 'uppercase', borderBottom: '1px solid #1a2016', width, overflow: 'hidden' }}>{label}</th>))}</tr></thead>
                           <tbody>
                             {sorted.map((f, i) => {
                               const gdu = f.cumulativeGDU || 0
@@ -944,28 +824,16 @@ export default function Home() {
                               return (
                                 <tr key={f.id} style={{ backgroundColor: i % 2 === 0 ? '#111612' : '#0f1410' }}>
                                   <td style={{ padding: '7px 10px', fontSize: '11px', color: priority, borderBottom: '1px solid #1a2016', fontWeight: 'bold', overflow: 'hidden' }}>{i + 1}</td>
-                                  <td style={{ padding: '7px 10px', fontSize: '12px', color: '#a8b888', borderBottom: '1px solid #1a2016', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                    <span onClick={() => goToFieldOnMap(f.id)} style={{ cursor: 'pointer', borderBottom: '1px dotted #4a5a3a' }}>{f.name}</span>
-                                  </td>
+                                  <td style={{ padding: '7px 10px', fontSize: '12px', color: '#a8b888', borderBottom: '1px solid #1a2016', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}><span onClick={() => goToFieldOnMap(f.id)} style={{ cursor: 'pointer', borderBottom: '1px dotted #4a5a3a' }}>{f.name}</span></td>
                                   <td style={{ padding: '7px 10px', fontSize: '11px', color: '#6b7a5a', borderBottom: '1px solid #1a2016', overflow: 'hidden' }}>{f.acres}</td>
                                   <td style={{ padding: '7px 10px', fontSize: '11px', color: '#6b7a5a', borderBottom: '1px solid #1a2016', overflow: 'hidden' }}>{certBadge(f.cert_status)}</td>
                                   <td style={{ padding: '7px 10px', fontSize: '12px', color: '#c8d4a0', borderBottom: '1px solid #1a2016', overflow: 'hidden' }}>{Math.round(gdu)}</td>
                                   <td style={{ padding: '7px 10px', fontSize: '12px', color: '#8a9a6a', borderBottom: '1px solid #1a2016', overflow: 'hidden' }}>{stage}</td>
-                                  <td style={{ padding: '7px 10px', fontSize: '11px', color: '#6b7a5a', borderBottom: '1px solid #1a2016', overflow: 'hidden' }}>
-                                    {f.lastTillageOpName ? (OP_ABBREV[f.lastTillageOpName] || f.lastTillageOpName) : '—'}
-                                  </td>
-                                  <td style={{ padding: '7px 10px', fontSize: '12px', color: hasTillage ? '#cc8800' : '#6b7a5a', borderBottom: '1px solid #1a2016', fontWeight: hasTillage ? 'bold' : 'normal', overflow: 'hidden' }}>
-                                    {hasTillage ? f.gduSinceLastTillage : `(${Math.round(gdu)})`}
-                                  </td>
-                                  <td style={{ padding: '7px 10px', fontSize: '12px', color: '#6aaa6a', borderBottom: '1px solid #1a2016', overflow: 'hidden' }}>
-                                    {hasTillage && f.rainfallSinceLastTillage !== undefined ? `${f.rainfallSinceLastTillage}"` : '—'}
-                                  </td>
-                                  <td style={{ padding: '7px 10px', fontSize: '12px', color: '#c8d4a0', borderBottom: '1px solid #1a2016', overflow: 'hidden' }}>
-                                    {nextAction ? nextAction.action : 'Beyond V6'}
-                                  </td>
-                                  <td style={{ padding: '7px 10px', fontSize: '12px', color: '#aad4ff', borderBottom: '1px solid #1a2016', overflow: 'hidden' }}>
-                                    {forecast || '—'}
-                                  </td>
+                                  <td style={{ padding: '7px 10px', fontSize: '11px', color: '#6b7a5a', borderBottom: '1px solid #1a2016', overflow: 'hidden' }}>{f.lastTillageOpName ? (OP_ABBREV[f.lastTillageOpName] || f.lastTillageOpName) : '—'}</td>
+                                  <td style={{ padding: '7px 10px', fontSize: '12px', color: hasTillage ? '#cc8800' : '#6b7a5a', borderBottom: '1px solid #1a2016', fontWeight: hasTillage ? 'bold' : 'normal', overflow: 'hidden' }}>{hasTillage ? f.gduSinceLastTillage : `(${Math.round(gdu)})`}</td>
+                                  <td style={{ padding: '7px 10px', fontSize: '12px', color: '#6aaa6a', borderBottom: '1px solid #1a2016', overflow: 'hidden' }}>{hasTillage && f.rainfallSinceLastTillage !== undefined ? `${f.rainfallSinceLastTillage}"` : '—'}</td>
+                                  <td style={{ padding: '7px 10px', fontSize: '12px', color: '#c8d4a0', borderBottom: '1px solid #1a2016', overflow: 'hidden' }}>{nextAction ? nextAction.action : 'Beyond V6'}</td>
+                                  <td style={{ padding: '7px 10px', fontSize: '12px', color: '#aad4ff', borderBottom: '1px solid #1a2016', overflow: 'hidden' }}>{forecast || '—'}</td>
                                 </tr>
                               )
                             })}
@@ -978,9 +846,7 @@ export default function Home() {
               </div>
             )
           })}
-          {weedingFields.length === 0 && (
-            <div style={{ color: '#6b7a5a', fontSize: '14px', textAlign: 'center', padding: '40px' }}>No organic/transition fields currently in crop with GDU data.</div>
-          )}
+          {weedingFields.length === 0 && <div style={{ color: '#6b7a5a', fontSize: '14px', textAlign: 'center', padding: '40px' }}>No organic/transition fields currently in crop with GDU data.</div>}
         </div>
       )}
 
@@ -991,9 +857,7 @@ export default function Home() {
             <thead>
               <tr>
                 <th style={{ width: '200px', padding: '8px 12px', textAlign: 'left', fontSize: '11px', letterSpacing: '0.15em', color: '#6b7a5a', textTransform: 'uppercase', borderBottom: '1px solid #2a3020', position: 'sticky', left: 0, backgroundColor: '#0f1410' }}>Field</th>
-                {MONTHS.map((m, i) => (
-                  <th key={m} style={{ padding: '8px 4px', textAlign: 'center', fontSize: '11px', color: i === currentMonth && year === currentYear ? '#c8d4a0' : '#6b7a5a', borderBottom: '1px solid #2a3020', borderLeft: i === currentMonth && year === currentYear ? '2px solid #c8d4a040' : undefined, fontWeight: i === currentMonth && year === currentYear ? 'bold' : 'normal' }}>{m}</th>
-                ))}
+                {MONTHS.map((m, i) => (<th key={m} style={{ padding: '8px 4px', textAlign: 'center', fontSize: '11px', color: i === currentMonth && year === currentYear ? '#c8d4a0' : '#6b7a5a', borderBottom: '1px solid #2a3020', borderLeft: i === currentMonth && year === currentYear ? '2px solid #c8d4a040' : undefined, fontWeight: i === currentMonth && year === currentYear ? 'bold' : 'normal' }}>{m}</th>))}
               </tr>
               <tr style={{ backgroundColor: '#080d08' }}>
                 <td style={{ padding: '2px 12px', fontSize: '9px', color: '#3a6a3a', position: 'sticky', left: 0, backgroundColor: '#080d08', letterSpacing: '0.1em', textTransform: 'uppercase', borderBottom: '1px solid #1a2016' }}>Cumul GDU N</td>
@@ -1007,23 +871,15 @@ export default function Home() {
             <tbody>
               {SECTIONS.map(({ label, filter }) => {
                 const collapsed = collapsedSections[label]
-                const sectionFields = sortFieldsConvLast(fields.filter(filter))
                 const isLBPork = label === 'LB Pork'
                 const region = label.includes('Northern') ? 'North' : 'South'
+                const sectionFields = sortFieldsConvLast(fields.filter(filter)).filter(f => hideConv[label] ? (f.cert_status || 'Conventional') !== 'Conventional' : true)
                 return (
                   <React.Fragment key={label}>
-                    <tr onClick={() => toggleSection(label)}>
-                      <td colSpan={13} style={sectionHeaderStyle}>
-                        <span style={{ fontSize: '12px' }}>{collapsed ? '▶' : '▼'}</span>
-                        {label}
-                        <span style={{ fontSize: '10px', color: '#4a5a3a', marginLeft: '4px' }}>({sectionFields.length})</span>
-                      </td>
-                    </tr>
+                    <SectionHeader label={label} colSpan={13} isLBPork={isLBPork} />
                     {!collapsed && sectionFields.map((field, fi) => (
                       <tr key={field.id} style={{ backgroundColor: fi % 2 === 0 ? '#111612' : '#0f1410' }}>
-                        <td style={{ padding: '6px 12px', fontSize: '12px', color: '#a8b888', borderBottom: '1px solid #1a2016', whiteSpace: 'nowrap', position: 'sticky', left: 0, backgroundColor: fi % 2 === 0 ? '#111612' : '#0f1410' }}>
-                          <FieldNameCell field={field} />
-                        </td>
+                        <td style={{ padding: '6px 12px', fontSize: '12px', color: '#a8b888', borderBottom: '1px solid #1a2016', whiteSpace: 'nowrap', position: 'sticky', left: 0, backgroundColor: fi % 2 === 0 ? '#111612' : '#0f1410' }}><FieldNameCell field={field} /></td>
                         {MONTHS.map((m, mi) => {
                           const monthOps = getOpsForMonth(field.id, mi)
                           const isCurrentMonth = mi === currentMonth && year === currentYear
@@ -1117,23 +973,15 @@ export default function Home() {
             <tbody>
               {SECTIONS.map(({ label, filter }) => {
                 const collapsed = collapsedSections[label]
-                const sectionFields = sortFieldsConvLast(fields.filter(filter))
                 const isLBPork = label === 'LB Pork'
                 const region = label.includes('Northern') ? 'North' : 'South'
+                const sectionFields = sortFieldsConvLast(fields.filter(filter)).filter(f => hideConv[label] ? (f.cert_status || 'Conventional') !== 'Conventional' : true)
                 return (
                   <React.Fragment key={label}>
-                    <tr onClick={() => toggleSection(label)}>
-                      <td colSpan={daysInMonth + 1} style={sectionHeaderStyle}>
-                        <span style={{ fontSize: '12px' }}>{collapsed ? '▶' : '▼'}</span>
-                        {label}
-                        <span style={{ fontSize: '10px', color: '#4a5a3a', marginLeft: '4px' }}>({sectionFields.length})</span>
-                      </td>
-                    </tr>
+                    <SectionHeader label={label} colSpan={daysInMonth + 1} isLBPork={isLBPork} />
                     {!collapsed && sectionFields.map((field, fi) => (
                       <tr key={field.id} style={{ backgroundColor: fi % 2 === 0 ? '#111612' : '#0f1410' }}>
-                        <td style={{ padding: '6px 12px', fontSize: '13px', color: '#a8b888', borderBottom: '1px solid #1a2016', whiteSpace: 'nowrap', position: 'sticky', left: 0, backgroundColor: fi % 2 === 0 ? '#111612' : '#0f1410' }}>
-                          <FieldNameCell field={field} />
-                        </td>
+                        <td style={{ padding: '6px 12px', fontSize: '13px', color: '#a8b888', borderBottom: '1px solid #1a2016', whiteSpace: 'nowrap', position: 'sticky', left: 0, backgroundColor: fi % 2 === 0 ? '#111612' : '#0f1410' }}><FieldNameCell field={field} /></td>
                         {days.map(day => {
                           const ops = getOperations(field.id, day)
                           const isToday = day === today && month === currentMonth && year === currentYear
@@ -1201,8 +1049,7 @@ export default function Home() {
       )}
 
       {showModal && <AddOperationModal fields={fields} opTypes={opTypes} onClose={() => setShowModal(false)} onSaved={onSaved} />}
-      {editOp && <AddOperationModal fields={fields} opTypes={opTypes} onClose={() => setEditOp(null)} onSaved={onSaved}
-        editOperation={{ id: editOp.id, field_id: editOp.field_id, operation_type_id: editOp.operation_type_id, date: editOp.date, notes: editOp.notes || '' }} />}
+      {editOp && <AddOperationModal fields={fields} opTypes={opTypes} onClose={() => setEditOp(null)} onSaved={onSaved} editOperation={{ id: editOp.id, field_id: editOp.field_id, operation_type_id: editOp.operation_type_id, date: editOp.date, notes: editOp.notes || '' }} />}
       {analysisField && <FieldAnalysis field={analysisField} onClose={() => setAnalysisField(null)} />}
     </div>
   )
