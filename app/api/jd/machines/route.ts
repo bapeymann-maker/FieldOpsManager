@@ -25,16 +25,17 @@ export async function GET() {
 
     // Get machines/assets for the org
     const res = await fetch(`${JD_BASE}/organizations/${ORG_ID}/machines?itemLimit=100`, { headers })
-    const data = await res.json()
+const text = await res.text()
 
-    // Also try assets endpoint
-    const res2 = await fetch(`${JD_BASE}/organizations/${ORG_ID}/assets?itemLimit=100`, { headers })
-    const data2 = await res2.json()
+const res2 = await fetch(`${JD_BASE}/organizations/${ORG_ID}/assets?itemLimit=100`, { headers })
+const text2 = await res2.text()
 
-    return NextResponse.json({
-      machines: data,
-      assets: data2
-    })
+return NextResponse.json({
+  machines_status: res.status,
+  machines_raw: text.slice(0, 500),
+  assets_status: res2.status,
+  assets_raw: text2.slice(0, 500)
+})
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 })
   }
