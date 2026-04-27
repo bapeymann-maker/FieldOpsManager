@@ -125,6 +125,7 @@ export async function GET(request: Request) {
               operation_type_id: opTypeId,
               date,
               notes: op.tillageProducts?.[0]?.tillageType || op.cropName || '',
+              crop_type: op.cropName || null,
               source: 'john_deere',
               jd_operation_id: op.id
             }, { onConflict: 'jd_operation_id' })
