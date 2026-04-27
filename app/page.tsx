@@ -466,7 +466,7 @@ export default function Home() {
     if (lastTillageOp && isInCrop && seedingDate) {
       const lastTillageDate = lastTillageOp.date
       lastTillageOpName = lastTillageOp.operation_types?.name
-      if (lastTillageDate >= seedingDate) {
+      if (lastTillageDate > seedingDate) {
         const recsSince = fieldGDU.filter(g => g.date > lastTillageDate)
         gduSinceLastTillage = Math.round(recsSince.reduce((s, g) => s + g.daily_gdu, 0))
         rainfallSinceLastTillage = Math.round(recsSince.reduce((s, g) => s + (g.rainfall_inches || 0), 0) * 100) / 100
