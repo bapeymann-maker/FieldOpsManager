@@ -97,6 +97,14 @@ function normalizeCropType(cropType: string | null): string {
   return cropType
 }
 
+function sortFieldsConvLast(fields: Field[]) {
+  return [...fields].sort((a, b) => {
+    const aConv = (a.cert_status || 'Conventional') === 'Conventional' ? 1 : 0
+    const bConv = (b.cert_status || 'Conventional') === 'Conventional' ? 1 : 0
+    return aConv - bConv
+  })
+}
+
 const SECTIONS = [
   { label: 'Northern Operation', filter: (f: Field) => f.region === 'North' && f.client !== 'LB Pork' },
   { label: 'Southern Operation', filter: (f: Field) => f.region === 'South' && f.client !== 'LB Pork' },
@@ -394,9 +402,9 @@ export default function Home() {
   }
 
   function getOperations(fieldId: string, day: number) {
-  const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`
-  return operations.filter(op => op.field_id === fieldId && op.date === dateStr)
-}
+    const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+    return operations.filter(op => op.field_id === fieldId && op.date === dateStr)
+  }
 
   function getOpsForMonth(fieldId: string, m: number) {
     return allYearOps.filter(op => new Date(op.date + 'T12:00:00').getMonth() === m && op.field_id === fieldId)
@@ -466,6 +474,7 @@ export default function Home() {
     if (lastTillageOp && isInCrop && seedingDate) {
       const lastTillageDate = lastTillageOp.date
       lastTillageOpName = lastTillageOp.operation_types?.name
+      // Only count tillage that happened AFTER seeding (not same day pre-plant tillage)
       if (lastTillageDate > seedingDate) {
         const recsSince = fieldGDU.filter(g => g.date > lastTillageDate)
         gduSinceLastTillage = Math.round(recsSince.reduce((s, g) => s + g.daily_gdu, 0))
@@ -530,42 +539,42 @@ export default function Home() {
     fontSize: '9px', color: hasData ? '#aad4ff' : '#2a3020',
   })
 
- function FieldNameCell({ field }: { field: Field }) {
-  const meta = fieldMetaMap[field.id]
-  return (
-    <>
-      <span
-        onClick={e => { e.stopPropagation(); setAnalysisField(field) }}
-        style={{ cursor: 'pointer', borderBottom: '1px dotted #4a5a3a', color: '#a8b888' }}
-        title="Click for field analysis">{field.name}</span>
-      <span
-        onClick={e => { e.stopPropagation(); goToFieldOnMap(field.id) }}
-        style={{ fontSize: '9px', color: '#3a5a3a', marginLeft: '4px', cursor: 'pointer' }}
-        title="View on heat map">⬡</span>
-      <span style={{ fontSize: '9px', color: '#6b7a5a', marginLeft: '5px' }}>{certBadge(field.cert_status)}</span>
-      {field.acres && <span style={{ fontSize: '10px', color: '#4a5a3a', marginLeft: '4px' }}>{field.acres}ac</span>}
-      {meta?.isInCrop && meta.gduSinceLastTillage !== undefined && (
-        <span style={{ fontSize: '9px', color: '#cc8800', marginLeft: '5px' }} title="GDUs since last tillage">
-          {meta.gduSinceLastTillage}↑
-        </span>
-      )}
-      {meta?.isInCrop && meta.rainfallSinceLastTillage !== undefined && meta.rainfallSinceLastTillage > 0 && (
-        <span style={{ fontSize: '9px', color: '#6aaa6a', marginLeft: '3px' }} title="Rainfall since last tillage">
-          {meta.rainfallSinceLastTillage}"
-        </span>
-      )}
-    </>
-  )
-}
+  function FieldNameCell({ field }: { field: Field }) {
+    const meta = fieldMetaMap[field.id]
+    return (
+      <>
+        <span onClick={e => { e.stopPropagation(); setAnalysisField(field) }}
+          style={{ cursor: 'pointer', borderBottom: '1px dotted #4a5a3a', color: '#a8b888' }}
+          title="Click for field analysis">{field.name}</span>
+        <span onClick={e => { e.stopPropagation(); goToFieldOnMap(field.id) }}
+          style={{ fontSize: '9px', color: '#3a5a3a', marginLeft: '4px', cursor: 'pointer' }}
+          title="View on heat map">⬡</span>
+        <span style={{ fontSize: '9px', color: '#6b7a5a', marginLeft: '5px' }}>{certBadge(field.cert_status)}</span>
+        {field.acres && <span style={{ fontSize: '10px', color: '#4a5a3a', marginLeft: '4px' }}>{field.acres}ac</span>}
+        {meta?.isInCrop && meta.gduSinceLastTillage !== undefined && (
+          <span style={{ fontSize: '9px', color: '#cc8800', marginLeft: '5px' }} title="GDUs since last tillage">
+            {meta.gduSinceLastTillage}↑
+          </span>
+        )}
+        {meta?.isInCrop && meta.rainfallSinceLastTillage !== undefined && meta.rainfallSinceLastTillage > 0 && (
+          <span style={{ fontSize: '9px', color: '#6aaa6a', marginLeft: '3px' }} title="Rainfall since last tillage">
+            {meta.rainfallSinceLastTillage}"
+          </span>
+        )}
+      </>
+    )
+  }
 
   const certTotals = CERT_GROUPS.map(g => {
     const groupFields = fields.filter(f => (f.cert_status || 'Conventional') === g.key && f.client !== 'LB Pork')
     return { ...g, count: groupFields.length, totalAcres: groupFields.reduce((sum, f) => sum + (f.acres || 0), 0) }
   })
 
+  // Exclude conventional fields from weed page
   const weedingFields = fieldsWithHeat.filter(f =>
     f.isInCrop && f.cumulativeGDU !== undefined && f.client !== 'LB Pork' &&
-    (f.region === 'North' || f.region === 'South')
+    (f.region === 'North' || f.region === 'South') &&
+    (f.cert_status || 'Conventional') !== 'Conventional'
   )
 
   const p = isMobile ? '12px 16px' : '16px 32px'
@@ -698,9 +707,7 @@ export default function Home() {
         <div style={{ padding: '10px 32px', backgroundColor: '#0a1208', borderBottom: '1px solid #2a3020', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <span style={{ fontSize: '12px', color: '#6b7a5a' }}>John Deere Operations Center</span>
           <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-            <button
-              onClick={handleSyncNow}
-              disabled={syncing}
+            <button onClick={handleSyncNow} disabled={syncing}
               style={{ padding: '5px 14px', backgroundColor: syncing ? '#1a3a1a' : '#2a5a2a', border: '1px solid #367c2b', color: syncing ? '#6b9a6b' : '#c8d4a0', borderRadius: '4px', fontSize: '12px', cursor: syncing ? 'default' : 'pointer' }}>
               {syncing ? 'Syncing...' : '↻ Sync Now'}
             </button>
@@ -972,7 +979,7 @@ export default function Home() {
             )
           })}
           {weedingFields.length === 0 && (
-            <div style={{ color: '#6b7a5a', fontSize: '14px', textAlign: 'center', padding: '40px' }}>No fields currently in crop with GDU data.</div>
+            <div style={{ color: '#6b7a5a', fontSize: '14px', textAlign: 'center', padding: '40px' }}>No organic/transition fields currently in crop with GDU data.</div>
           )}
         </div>
       )}
@@ -1000,7 +1007,7 @@ export default function Home() {
             <tbody>
               {SECTIONS.map(({ label, filter }) => {
                 const collapsed = collapsedSections[label]
-                const sectionFields = fields.filter(filter)
+                const sectionFields = sortFieldsConvLast(fields.filter(filter))
                 const isLBPork = label === 'LB Pork'
                 const region = label.includes('Northern') ? 'North' : 'South'
                 return (
@@ -1110,7 +1117,7 @@ export default function Home() {
             <tbody>
               {SECTIONS.map(({ label, filter }) => {
                 const collapsed = collapsedSections[label]
-                const sectionFields = fields.filter(filter)
+                const sectionFields = sortFieldsConvLast(fields.filter(filter))
                 const isLBPork = label === 'LB Pork'
                 const region = label.includes('Northern') ? 'North' : 'South'
                 return (
@@ -1137,7 +1144,7 @@ export default function Home() {
                                 {ops.map(op => (
                                   <div key={op.id} onClick={e => { e.stopPropagation(); setHideStep(0); setSelectedOp({ op, fieldName: field.name }) }}
                                     title={op.operation_types?.name}
-                                    style={{ backgroundColor: op.operation_types?.color || '#666', color: '#fff', width: '28px', height: '22px', borderRadius: '3px', margin: '0 auto', fontSize: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', fontWeight: 'bold' }}>
+                                    style={{ backgroundColor: op.operation_types?.color || '#666', color: '#fff', width: '28px', height: '22px', borderRadius: '3px', fontSize: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', fontWeight: 'bold' }}>
                                     {OP_ABBREV[op.operation_types?.name || ''] || op.operation_types?.name?.slice(0, 2).toUpperCase() || '?'}
                                   </div>
                                 ))}
