@@ -23,19 +23,31 @@ export async function GET() {
       'Accept': 'application/vnd.deere.axiom.v3+json'
     }
 
-    // Get machines/assets for the org
-    const res = await fetch(`${JD_BASE}/organizations/${ORG_ID}/machines?itemLimit=100`, { headers })
-const text = await res.text()
+    const endpoints = [
+      `/organizations/${ORG_ID}/machines`,
+      `/organizations/${ORG_ID}/equipment`,
+      `/organizations/${ORG_ID}/assets`,
+      `/machines`,
+      `/equipment`,
+    ]
 
-const res2 = await fetch(`${JD_BASE}/organizations/${ORG_ID}/assets?itemLimit=100`, { headers })
-const text2 = await res2.text()
+    const results: Record<string, { status: number; body: string }> = {}
 
-return NextResponse.json({
-  machines_status: res.status,
-  machines_raw: text.slice(0, 500),
-  assets_status: res2.status,
-  assets_raw: text2.slice(0, 500)
-})
+    for (const ep of endpoints) {
+      const res = await fetch(`${JD_BASE}${ep}?itemLimit=5`, { headers })
+      const text = await res.text()
+      results[ep] = { status: res.status, body: text.slice(0, 200) }
+    }
+
+    // Also check what scopes the current token has
+    const tokenRes = await fetch('https://signin.johndeere.com/oauth2/aus78tnlaysMraFhC1t7/v1/introspect', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Authorization': 'Basic ' + Buffer.from(process.env.JOHN_DEERE_CLIENT_ID + ':' + process.env.JOHN_DEERE_CLIENT_SECRET).toString('base64') },
+      body: new URLSearchParams({ token })
+    })
+    const tokenData = await tokenRes.json()
+
+    return NextResponse.json({ results, token_scopes: tokenData.scope, token_active: tokenData.active })
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 })
   }
