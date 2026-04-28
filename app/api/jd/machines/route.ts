@@ -24,12 +24,12 @@ export async function GET() {
     }
 
     const endpoints = [
-      `/organizations/${ORG_ID}/machines`,
-      `/organizations/${ORG_ID}/memberMachines`,
-      `/organizations/${ORG_ID}/machines?memberFilter=member`,
-      `/user/machines`,
-      `/organizations/${ORG_ID}/clients`,
-    ]
+  `/organizations/${ORG_ID}/machines`,
+  `/machines/4844531`,
+  `/machines/4844531/locationHistory`,
+  `/machines/4844531/breadcrumbs`,
+  `/machines/4844531/hoursOfOperation`,
+]
 
     const results: Record<string, { status: number; body: string }> = {}
 
