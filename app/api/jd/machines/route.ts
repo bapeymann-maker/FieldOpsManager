@@ -24,11 +24,11 @@ export async function GET() {
     }
 
     const endpoints = [
+  `/organizations/${ORG_ID}`,
   `/organizations/${ORG_ID}/machines`,
-  `/organizations/${ORG_ID}/machines?embed=terminals`,
-  `/organizations/${ORG_ID}/assets?assetCategory=DEVICE`,
-  `/organizations/${ORG_ID}/assets?assetCategory=EQUIPMENT`,
-  `/organizations/${ORG_ID}/assets?embed=devices`,
+  `/organizations/${ORG_ID}/machines?memberFilter=owned`,
+  `/organizations/${ORG_ID}/machineRegistrations`,
+  `/organizations/${ORG_ID}/jdlinkMachines`,
 ]
 
     const results: Record<string, { status: number; body: string }> = {}
