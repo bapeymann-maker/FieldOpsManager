@@ -72,6 +72,38 @@ function findFieldForPoint(lat: number, lon: number, fields: { id: string; bound
   return null
 }
 
+// Cache operation type lookups to avoid repeated DB calls
+const opTypeCache: Record<string, string | null> = {}
+
+async function getOperationTypeForFieldDate(fieldId: string, date: string): Promise<string | null> {
+  const cacheKey = `${fieldId}_${date}`
+  if (cacheKey in opTypeCache) return opTypeCache[cacheKey]
+
+  const { data } = await supabase
+    .from('operations')
+    .select('operation_types(name)')
+    .eq('field_id', fieldId)
+    .eq('date', date)
+    .order('date', { ascending: false })
+    .limit(1)
+
+  // Pick the most meaningful operation type for the day
+  // Priority: Seeding > Harvest > Tillage > Application
+  const ops = data || []
+  let opType: string | null = null
+
+  for (const op of ops) {
+    const name = (op as any).operation_types?.name || ''
+    if (name === 'Seeding') { opType = 'Seeding'; break }
+    if (name === 'Harvest') { opType = 'Harvest'; break }
+    if (name.startsWith('Tillage')) { opType = name; break }
+    if (name.startsWith('Application')) { opType = name }
+  }
+
+  opTypeCache[cacheKey] = opType
+  return opType
+}
+
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url)
@@ -126,7 +158,6 @@ export async function GET(request: Request) {
     for (const machine of relevantMachines) {
       const machineId = machine.id
 
-      // Fetch ALL location history pages
       let allLocations: { lat: number; lon: number; ts: string }[] = []
       let locUrl: string = `${JD_BASE}/machines/${machineId}/locationHistory?startDate=${encodeURIComponent(since)}&endDate=${encodeURIComponent(until)}&itemLimit=100`
 
@@ -147,7 +178,6 @@ export async function GET(request: Request) {
 
         const nextLink = locData.links?.find((l: any) => l.rel === 'nextPage')
         locUrl = nextLink?.uri || ''
-
         await new Promise(r => setTimeout(r, 100))
       }
 
@@ -178,13 +208,17 @@ export async function GET(request: Request) {
             const durationMs = new Date(lastTs).getTime() - new Date(sessionStart).getTime()
             const durationMinutes = Math.round(durationMs / 60000)
             if (durationMinutes >= 2) {
+              const sessionDate = sessionStart.split('T')[0]
+              const opType = await getOperationTypeForFieldDate(currentFieldId, sessionDate)
+
               const { error } = await supabase.from('machine_field_sessions').upsert({
                 machine_id: machineId,
                 field_id: currentFieldId,
                 entered_at: sessionStart,
                 exited_at: lastTs,
                 duration_minutes: durationMinutes,
-                date: sessionStart.split('T')[0]
+                operation_type: opType,
+                date: sessionDate
               }, { onConflict: 'machine_id,field_id,entered_at' })
               if (!error) { totalSessions++; machineSessions++ }
             }
@@ -199,13 +233,17 @@ export async function GET(request: Request) {
         const durationMs = new Date(lastTs).getTime() - new Date(sessionStart).getTime()
         const durationMinutes = Math.round(durationMs / 60000)
         if (durationMinutes >= 2) {
+          const sessionDate = sessionStart.split('T')[0]
+          const opType = await getOperationTypeForFieldDate(currentFieldId, sessionDate)
+
           const { error } = await supabase.from('machine_field_sessions').upsert({
             machine_id: machineId,
             field_id: currentFieldId,
             entered_at: sessionStart,
             exited_at: lastTs,
             duration_minutes: durationMinutes,
-            date: sessionStart.split('T')[0]
+            operation_type: opType,
+            date: sessionDate
           }, { onConflict: 'machine_id,field_id,entered_at' })
           if (!error) { totalSessions++; machineSessions++ }
         }
