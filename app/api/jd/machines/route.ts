@@ -25,10 +25,10 @@ export async function GET() {
 
     const endpoints = [
       `/organizations/${ORG_ID}/machines`,
-      `/organizations/${ORG_ID}/equipment`,
-      `/organizations/${ORG_ID}/assets`,
-      `/machines`,
-      `/equipment`,
+      `/organizations/${ORG_ID}/memberMachines`,
+      `/organizations/${ORG_ID}/machines?memberFilter=member`,
+      `/user/machines`,
+      `/organizations/${ORG_ID}/clients`,
     ]
 
     const results: Record<string, { status: number; body: string }> = {}
