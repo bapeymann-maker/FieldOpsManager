@@ -25,10 +25,10 @@ export async function GET() {
 
     const endpoints = [
   `/organizations/${ORG_ID}/machines`,
-  `/machines/4844531`,
-  `/machines/4844531/locationHistory`,
-  `/machines/4844531/breadcrumbs`,
-  `/machines/4844531/hoursOfOperation`,
+  `/organizations/${ORG_ID}/machines?embed=terminals`,
+  `/organizations/${ORG_ID}/assets?assetCategory=DEVICE`,
+  `/organizations/${ORG_ID}/assets?assetCategory=EQUIPMENT`,
+  `/organizations/${ORG_ID}/assets?embed=devices`,
 ]
 
     const results: Record<string, { status: number; body: string }> = {}
