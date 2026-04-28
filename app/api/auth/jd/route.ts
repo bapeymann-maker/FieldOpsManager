@@ -5,7 +5,7 @@ export async function GET() {
     response_type: 'code',
     client_id: process.env.JOHN_DEERE_CLIENT_ID!,
     redirect_uri: process.env.NEXT_PUBLIC_BASE_URL + '/api/auth/callback',
-    scope: 'ag1 ag2 ag3 eq1 eq2 eq3 files offline_access',
+    scope: 'ag1 ag2 ag3 eq1 eq2 files offline_access',
     state: 'field-ops-manager'
   })
 
