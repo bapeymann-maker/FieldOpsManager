@@ -10,9 +10,14 @@ const JD_BASE = 'https://api.deere.com/platform'
 const ORG_ID = '464281'
 
 const RELEVANT_TYPES = new Set([
-  'Track Tractor', 'Wheel Tractor', 'Tractor', 'Combine', 'Sprayer', 'Planter',
+  'Track Tractor',
+  'Wheel Tractor',
+  'Tractor',
+  'Combine',
+  'Sprayer',
+  'Planter',
   'Two-wheel Drive Tractors - 140 Hp And Above',
-  'Four-wheel Drive Tractor'
+  'Four-wheel Drive Tractor',
 ])
 
 async function getAccessToken() {
@@ -74,7 +79,6 @@ function findFieldForPoint(lat: number, lon: number, fields: { id: string; bound
   return null
 }
 
-// Cache operation type lookups to avoid repeated DB calls
 const opTypeCache: Record<string, string | null> = {}
 
 async function getOperationTypeForFieldDate(fieldId: string, date: string): Promise<string | null> {
@@ -89,8 +93,6 @@ async function getOperationTypeForFieldDate(fieldId: string, date: string): Prom
     .order('date', { ascending: false })
     .limit(1)
 
-  // Pick the most meaningful operation type for the day
-  // Priority: Seeding > Harvest > Tillage > Application
   const ops = data || []
   let opType: string | null = null
 
@@ -118,6 +120,7 @@ export async function GET(request: Request) {
       'Accept': 'application/vnd.deere.axiom.v3+json'
     }
 
+    // Load all fields with boundaries
     const { data: dbFields } = await supabase
       .from('fields')
       .select('id, name, boundary')
@@ -125,6 +128,7 @@ export async function GET(request: Request) {
 
     const fields = (dbFields || []).filter(f => f.boundary)
 
+    // Get machine list from ISG endpoint
     const machineRes = await fetch(
       `https://api.deere.com/isg/equipment?organizationIds=${ORG_ID}`,
       { headers }
@@ -132,11 +136,19 @@ export async function GET(request: Request) {
     const machineData = await machineRes.json()
     const allMachines = machineData.values || []
 
-    const relevantMachines = allMachines.filter((m: any) => {
-      if (machineFilter) return m.id === machineFilter
-      return m.telematicsCapable && !m.archived && RELEVANT_TYPES.has(m.type?.name || '')
-    })
+    // Filter to relevant types and map principalId for platform API calls
+    const relevantMachines = allMachines
+      .filter((m: any) => {
+        if (machineFilter) return m.id === machineFilter
+        return m.telematicsCapable && !m.archived && RELEVANT_TYPES.has(m.type?.name || '')
+      })
+      .map((m: any) => ({
+        ...m,
+        // principalId is the correct ID for /platform/machines/{id} endpoint
+        platformId: m.principalId || m.id
+      }))
 
+    // Upsert machines into DB
     for (const m of relevantMachines) {
       await supabase.from('machines').upsert({
         id: m.id,
@@ -155,13 +167,15 @@ export async function GET(request: Request) {
 
     let totalSessions = 0
     let processed = 0
-    const machineDetails: { id: string; name: string; pings: number; sessions: number }[] = []
+    const machineDetails: { id: string; name: string; platformId: string; pings: number; sessions: number }[] = []
 
     for (const machine of relevantMachines) {
       const machineId = machine.id
+      const platformId = machine.platformId
 
+      // Fetch ALL location history pages using platformId
       let allLocations: { lat: number; lon: number; ts: string }[] = []
-      let locUrl: string = `${JD_BASE}/machines/${machineId}/locationHistory?startDate=${encodeURIComponent(since)}&endDate=${encodeURIComponent(until)}&itemLimit=100`
+      let locUrl: string = `${JD_BASE}/machines/${platformId}/locationHistory?startDate=${encodeURIComponent(since)}&endDate=${encodeURIComponent(until)}&itemLimit=100`
 
       while (locUrl) {
         const locRes = await fetch(locUrl, { headers })
@@ -186,10 +200,11 @@ export async function GET(request: Request) {
       const locations = allLocations.sort((a, b) => new Date(a.ts).getTime() - new Date(b.ts).getTime())
 
       if (locations.length === 0) {
-        machineDetails.push({ id: machineId, name: machine.name, pings: 0, sessions: 0 })
+        machineDetails.push({ id: machineId, name: machine.name, platformId, pings: 0, sessions: 0 })
         continue
       }
 
+      // Update machine last seen
       const lastLoc = locations[locations.length - 1]
       await supabase.from('machines').update({
         last_seen_at: lastLoc.ts,
@@ -197,6 +212,7 @@ export async function GET(request: Request) {
         last_lon: lastLoc.lon
       }).eq('id', machineId)
 
+      // Build field sessions from location trail
       let currentFieldId: string | null = null
       let sessionStart: string | null = null
       let lastTs: string | null = null
@@ -212,7 +228,6 @@ export async function GET(request: Request) {
             if (durationMinutes >= 2) {
               const sessionDate = sessionStart.split('T')[0]
               const opType = await getOperationTypeForFieldDate(currentFieldId, sessionDate)
-
               const { error } = await supabase.from('machine_field_sessions').upsert({
                 machine_id: machineId,
                 field_id: currentFieldId,
@@ -231,13 +246,13 @@ export async function GET(request: Request) {
         lastTs = loc.ts
       }
 
+      // Save last open session
       if (currentFieldId && sessionStart && lastTs) {
         const durationMs = new Date(lastTs).getTime() - new Date(sessionStart).getTime()
         const durationMinutes = Math.round(durationMs / 60000)
         if (durationMinutes >= 2) {
           const sessionDate = sessionStart.split('T')[0]
           const opType = await getOperationTypeForFieldDate(currentFieldId, sessionDate)
-
           const { error } = await supabase.from('machine_field_sessions').upsert({
             machine_id: machineId,
             field_id: currentFieldId,
@@ -251,7 +266,7 @@ export async function GET(request: Request) {
         }
       }
 
-      machineDetails.push({ id: machineId, name: machine.name, pings: locations.length, sessions: machineSessions })
+      machineDetails.push({ id: machineId, name: machine.name, platformId, pings: locations.length, sessions: machineSessions })
       processed++
       await new Promise(r => setTimeout(r, 200))
     }
