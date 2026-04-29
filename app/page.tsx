@@ -243,10 +243,13 @@ export default function Home() {
       const endDate = `${year}-${String(month + 1).padStart(2, '0')}-${String(daysInMonth).padStart(2, '0')}`
       const [fieldsData, opTypesData] = await Promise.all([getFields(), getOperationTypes()])
       const { data: opsRaw } = await supabaseClient.from('operations').select('*, fields(name), operation_types(name, color)').gte('date', startDate).lte('date', endDate)
-      const { data: allOpsRaw } = await supabaseClient.from('operations').select('*, operation_types(name, color)').order('date', { ascending: false })
+      const { data: allOpsRaw } = await supabaseClient.from('operations').select('*, operation_types(name, color)').gte('date', `${currentYear}-01-01`).order('date', { ascending: false })
       const { data: gduRaw } = await supabaseClient.from('gdu_daily').select('*').gte('date', `${year}-01-01`).lte('date', `${year}-12-31`)
-      setFields(fieldsData || []); setOperations((opsRaw || []).filter((op: Operation) => !op.hidden))
-      setAllOps((allOpsRaw || []).filter((op: Operation) => !op.hidden)); setOpTypes(opTypesData || []); setGduData(gduRaw || [])
+      setFields(fieldsData || [])
+      setOperations((opsRaw || []).filter((op: Operation) => !op.hidden))
+      setAllOps((allOpsRaw || []).filter((op: Operation) => !op.hidden))
+      setOpTypes(opTypesData || [])
+      setGduData(gduRaw || [])
     } catch (err) { console.error(err) }
     setLoading(false)
   }
@@ -256,10 +259,13 @@ export default function Home() {
     try {
       const [fieldsData, opTypesData] = await Promise.all([getFields(), getOperationTypes()])
       const { data: opsRaw } = await supabaseClient.from('operations').select('*, fields(name), operation_types(name, color)').gte('date', `${year}-01-01`).lte('date', `${year}-12-31`)
-      const { data: allOpsRaw } = await supabaseClient.from('operations').select('*, operation_types(name, color)').order('date', { ascending: false })
+      const { data: allOpsRaw } = await supabaseClient.from('operations').select('*, operation_types(name, color)').gte('date', `${currentYear}-01-01`).order('date', { ascending: false })
       const { data: gduRaw } = await supabaseClient.from('gdu_daily').select('*').gte('date', `${year}-01-01`).lte('date', `${year}-12-31`)
-      setFields(fieldsData || []); setAllYearOps((opsRaw || []).filter((op: Operation) => !op.hidden))
-      setAllOps((allOpsRaw || []).filter((op: Operation) => !op.hidden)); setOpTypes(opTypesData || []); setGduData(gduRaw || [])
+      setFields(fieldsData || [])
+      setAllYearOps((opsRaw || []).filter((op: Operation) => !op.hidden))
+      setAllOps((allOpsRaw || []).filter((op: Operation) => !op.hidden))
+      setOpTypes(opTypesData || [])
+      setGduData(gduRaw || [])
     } catch (err) { console.error(err) }
     setLoading(false)
   }
@@ -269,10 +275,13 @@ export default function Home() {
     try {
       const [fieldsData, opTypesData] = await Promise.all([getFields(), getOperationTypes()])
       const { data: opsRaw } = await supabaseClient.from('operations').select('*, fields(name), operation_types(name, color)').order('date', { ascending: false }).limit(100)
-      const { data: allOpsRaw } = await supabaseClient.from('operations').select('*, operation_types(name, color)').order('date', { ascending: false })
+      const { data: allOpsRaw } = await supabaseClient.from('operations').select('*, operation_types(name, color)').gte('date', `${currentYear}-01-01`).order('date', { ascending: false })
       const { data: gduRaw } = await supabaseClient.from('gdu_daily').select('*').gte('date', `${currentYear}-01-01`)
-      setFields(fieldsData || []); setOperations((opsRaw || []).filter((op: Operation) => !op.hidden))
-      setAllOps((allOpsRaw || []).filter((op: Operation) => !op.hidden)); setOpTypes(opTypesData || []); setGduData(gduRaw || [])
+      setFields(fieldsData || [])
+      setOperations((opsRaw || []).filter((op: Operation) => !op.hidden))
+      setAllOps((allOpsRaw || []).filter((op: Operation) => !op.hidden))
+      setOpTypes(opTypesData || [])
+      setGduData(gduRaw || [])
     } catch (err) { console.error(err) }
     setLoading(false)
   }
@@ -290,7 +299,74 @@ export default function Home() {
     const totalAcres = uniqueFieldIds.reduce((sum, fid) => sum + (fields.find(f => f.id === fid)?.acres || 0), 0)
     return { ...ot, totalAcres, count: opsOfType.length }
   }).filter(s => s.count > 0)
+
   const totalAcresWorked = acresSummary.reduce((sum, s) => sum + s.totalAcres, 0)
+
+  const fieldsWithHeat = fields.map(f => {
+    const fieldOps = allOps
+      .filter(op => op.field_id === f.id && op.date >= `${currentYear}-01-01`)
+      .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+
+    const latest = fieldOps[0]
+    const daysSinceWork = latest ? daysSince(latest.date) : undefined
+    const lastOpType = latest?.operation_types?.name || ''
+    const lastSeeding = fieldOps.find(op => op.operation_types?.name === 'Seeding')
+    const lastHarvest = fieldOps.find(op => op.operation_types?.name === 'Harvest')
+    const isInCrop = lastSeeding ? (!lastHarvest || new Date(lastSeeding.date) > new Date(lastHarvest.date)) : false
+    const seedingDate = lastSeeding?.date
+    const cropType = normalizeCropType(lastSeeding?.crop_type || lastSeeding?.notes || null)
+    const fieldGDU = seedingDate ? gduData.filter(g => g.field_id === f.id && g.date >= seedingDate) : []
+    const sortedGDU = [...fieldGDU].sort((a, b) => b.date.localeCompare(a.date))
+    const latestGDU = sortedGDU[0]
+    const cumulativeGDU = latestGDU?.cumulative_gdu
+    const cumulativeRainfall = latestGDU?.cumulative_rainfall
+
+    let gduSinceLastWork: number | undefined
+    let rainfallSinceLastWork: number | undefined
+    if (latest && daysSinceWork !== undefined && daysSinceWork > 0 && isInCrop && seedingDate) {
+      const lastWorkDate = latest.date
+      if (lastWorkDate > seedingDate) {
+        const recs = fieldGDU.filter(g => g.date > lastWorkDate)
+        const gs = recs.reduce((s, g) => s + g.daily_gdu, 0)
+        const rs = recs.reduce((s, g) => s + (g.rainfall_inches || 0), 0)
+        gduSinceLastWork = gs > 0 ? Math.round(gs * 10) / 10 : undefined
+        rainfallSinceLastWork = rs > 0 ? Math.round(rs * 100) / 100 : undefined
+      }
+    }
+
+    const lastTillageOp = fieldOps.find(op => TILLAGE_OP_NAMES.has(op.operation_types?.name || ''))
+    let gduSinceLastTillage: number | undefined
+    let rainfallSinceLastTillage: number | undefined
+    let lastTillageOpName: string | undefined
+
+    if (isInCrop && seedingDate) {
+      if (lastTillageOp && lastTillageOp.date > seedingDate) {
+        const lastTillageDate = lastTillageOp.date
+        lastTillageOpName = lastTillageOp.operation_types?.name
+        const recsSince = fieldGDU.filter(g => g.date > lastTillageDate)
+        gduSinceLastTillage = Math.round(recsSince.reduce((s, g) => s + g.daily_gdu, 0))
+        rainfallSinceLastTillage = Math.round(recsSince.reduce((s, g) => s + (g.rainfall_inches || 0), 0) * 100) / 100
+      } else {
+        const recsSince = fieldGDU.filter(g => g.date > seedingDate)
+        gduSinceLastTillage = Math.round(recsSince.reduce((s, g) => s + g.daily_gdu, 0))
+        rainfallSinceLastTillage = Math.round(recsSince.reduce((s, g) => s + (g.rainfall_inches || 0), 0) * 100) / 100
+      }
+    }
+
+    return {
+      ...f, daysSinceWork, isInCrop, lastOpType, cumulativeGDU, cumulativeRainfall,
+      gduSinceLastWork, rainfallSinceLastWork,
+      gduSinceLastTillage, rainfallSinceLastTillage, lastTillageOpName,
+      cropType, seedingDate
+    }
+  })
+
+  const heatMapFields = mapMode === 'daily' ? fieldsWithHeat.filter(f => f.isInCrop) : fieldsWithHeat
+
+  const fieldMetaMap: Record<string, { gduSinceLastTillage?: number; rainfallSinceLastTillage?: number; isInCrop: boolean }> = {}
+  for (const f of fieldsWithHeat) {
+    fieldMetaMap[f.id] = { gduSinceLastTillage: f.gduSinceLastTillage, rainfallSinceLastTillage: f.rainfallSinceLastTillage, isInCrop: f.isInCrop }
+  }
 
   function getCumulativeGDUForDay(day: number, region: 'North' | 'South') {
     const cellDate = new Date(year, month, day)
@@ -298,10 +374,10 @@ export default function Home() {
     if (isCurrentMonth && cellDate > new Date()) return null
     const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`
     const startOfYear = `${year}-01-01`
-    const regionFieldIds = fields.filter(f => 
-  f.region === region && f.client !== 'LB Pork' &&
-  fieldsWithHeat.find(fh => fh.id === f.id && fh.isInCrop)
-).map(f => f.id)
+    const regionFieldIds = fields.filter(f =>
+      f.region === region && f.client !== 'LB Pork' &&
+      fieldsWithHeat.find(fh => fh.id === f.id && fh.isInCrop)
+    ).map(f => f.id)
     const records = gduData.filter(g => g.date >= startOfYear && g.date <= dateStr && regionFieldIds.includes(g.field_id))
     if (records.length === 0) return null
     const fieldTotals: Record<string, number> = {}
@@ -314,10 +390,10 @@ export default function Home() {
   function getCumulativeGDUForMonth(monthIndex: number, region: 'North' | 'South') {
     const startOfYear = `${year}-01-01`
     const endOfMonth = `${year}-${String(monthIndex + 1).padStart(2, '0')}-${String(getDaysInMonth(year, monthIndex)).padStart(2, '0')}`
-    const regionFieldIds = fields.filter(f => 
-  f.region === region && f.client !== 'LB Pork' &&
-  fieldsWithHeat.find(fh => fh.id === f.id && fh.isInCrop)
-).map(f => f.id)
+    const regionFieldIds = fields.filter(f =>
+      f.region === region && f.client !== 'LB Pork' &&
+      fieldsWithHeat.find(fh => fh.id === f.id && fh.isInCrop)
+    ).map(f => f.id)
     const records = gduData.filter(g => g.date >= startOfYear && g.date <= endOfMonth && regionFieldIds.includes(g.field_id))
     if (records.length === 0) return null
     const fieldTotals: Record<string, number> = {}
@@ -344,6 +420,19 @@ export default function Home() {
     const monthRecords = gduData.filter(g => g.date.startsWith(monthStr) && regionFieldIds.includes(g.field_id))
     if (monthRecords.length === 0) return null
     return Math.round(monthRecords.reduce((sum, g) => sum + g.daily_gdu, 0) / regionFieldIds.length * 10) / 10
+  }
+
+  function getForecastDate(currentGDU: number, targetGDU: number, fieldId: string): string {
+    try {
+      const recent = gduData.filter(g => g.field_id === fieldId).sort((a, b) => b.date.localeCompare(a.date)).slice(0, 7)
+      const avgDaily = recent.length > 0 ? recent.reduce((s, g) => s + (g.daily_gdu || 0), 0) / recent.length : 15
+      if (!avgDaily || avgDaily <= 0) return 'Unknown'
+      const daysNeeded = Math.ceil((targetGDU - currentGDU) / avgDaily)
+      if (daysNeeded <= 0) return 'Now'
+      if (daysNeeded > 90) return '90+ days'
+      const date = new Date(); date.setDate(date.getDate() + daysNeeded)
+      return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+    } catch (e) { return 'Unknown' }
   }
 
   async function handleSignOut() { await supabase.auth.signOut(); router.push('/login'); router.refresh() }
@@ -388,75 +477,6 @@ export default function Home() {
     const a = document.createElement('a'); a.href = url
     a.download = `field-ops-${view === 'year' ? year : `${year}-${String(month + 1).padStart(2, '0')}`}.csv`
     a.click(); URL.revokeObjectURL(url)
-  }
-
-  const fieldsWithHeat = fields.map(f => {
-    const fieldOps = allOps.filter(op => op.field_id === f.id && op.date >= `${currentYear}-01-01`).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
-    const latest = fieldOps[0]
-    const daysSinceWork = latest ? daysSince(latest.date) : undefined
-    const lastOpType = latest?.operation_types?.name || ''
-    const lastSeeding = fieldOps.find(op => op.operation_types?.name === 'Seeding')
-    const lastHarvest = fieldOps.find(op => op.operation_types?.name === 'Harvest')
-    const isInCrop = lastSeeding ? (!lastHarvest || new Date(lastSeeding.date) > new Date(lastHarvest.date)) : false
-    const seedingDate = lastSeeding?.date
-    const cropType = normalizeCropType(lastSeeding?.crop_type || lastSeeding?.notes || null)
-    const fieldGDU = seedingDate ? gduData.filter(g => g.field_id === f.id && g.date >= seedingDate) : []
-    const sortedGDU = [...fieldGDU].sort((a, b) => b.date.localeCompare(a.date))
-    const latestGDU = sortedGDU[0]
-    const cumulativeGDU = latestGDU?.cumulative_gdu
-    const cumulativeRainfall = latestGDU?.cumulative_rainfall
-    let gduSinceLastWork: number | undefined
-    let rainfallSinceLastWork: number | undefined
-    if (latest && daysSinceWork !== undefined && daysSinceWork > 0 && isInCrop && seedingDate) {
-      const lastWorkDate = latest.date
-      if (lastWorkDate > seedingDate) {
-        const recs = fieldGDU.filter(g => g.date > lastWorkDate)
-        const gs = recs.reduce((s, g) => s + g.daily_gdu, 0)
-        const rs = recs.reduce((s, g) => s + (g.rainfall_inches || 0), 0)
-        gduSinceLastWork = gs > 0 ? Math.round(gs * 10) / 10 : undefined
-        rainfallSinceLastWork = rs > 0 ? Math.round(rs * 100) / 100 : undefined
-      }
-    }
-    const lastTillageOp = fieldOps.find(op => TILLAGE_OP_NAMES.has(op.operation_types?.name || ''))
-    let gduSinceLastTillage: number | undefined
-    let rainfallSinceLastTillage: number | undefined
-    let lastTillageOpName: string | undefined
-    if (isInCrop && seedingDate) {
-      if (lastTillageOp && lastTillageOp.date > seedingDate) {
-       // Post-seeding tillage exists — count from last tillage date
-       const lastTillageDate = lastTillageOp.date
-       lastTillageOpName = lastTillageOp.operation_types?.name
-       const recsSince = fieldGDU.filter(g => g.date > lastTillageDate)
-       gduSinceLastTillage = Math.round(recsSince.reduce((s, g) => s + g.daily_gdu, 0))
-       rainfallSinceLastTillage = Math.round(recsSince.reduce((s, g) => s + (g.rainfall_inches || 0), 0) * 100) / 100
-      } else {
-        // No post-seeding tillage yet — count from seeding date
-        const recsSince = fieldGDU.filter(g => g.date > seedingDate)
-        gduSinceLastTillage = Math.round(recsSince.reduce((s, g) => s + g.daily_gdu, 0))
-        rainfallSinceLastTillage = Math.round(recsSince.reduce((s, g) => s + (g.rainfall_inches || 0), 0) * 100) / 100
-      }
-    }
-    return { ...f, daysSinceWork, isInCrop, lastOpType, cumulativeGDU, cumulativeRainfall, gduSinceLastWork, rainfallSinceLastWork, gduSinceLastTillage, rainfallSinceLastTillage, lastTillageOpName, cropType, seedingDate }
-  })
-
-  const heatMapFields = mapMode === 'daily' ? fieldsWithHeat.filter(f => f.isInCrop) : fieldsWithHeat
-
-  const fieldMetaMap: Record<string, { gduSinceLastTillage?: number; rainfallSinceLastTillage?: number; isInCrop: boolean }> = {}
-  for (const f of fieldsWithHeat) {
-    fieldMetaMap[f.id] = { gduSinceLastTillage: f.gduSinceLastTillage, rainfallSinceLastTillage: f.rainfallSinceLastTillage, isInCrop: f.isInCrop }
-  }
-
-  function getForecastDate(currentGDU: number, targetGDU: number, fieldId: string): string {
-    try {
-      const recent = gduData.filter(g => g.field_id === fieldId).sort((a, b) => b.date.localeCompare(a.date)).slice(0, 7)
-      const avgDaily = recent.length > 0 ? recent.reduce((s, g) => s + (g.daily_gdu || 0), 0) / recent.length : 15
-      if (!avgDaily || avgDaily <= 0) return 'Unknown'
-      const daysNeeded = Math.ceil((targetGDU - currentGDU) / avgDaily)
-      if (daysNeeded <= 0) return 'Now'
-      if (daysNeeded > 90) return '90+ days'
-      const date = new Date(); date.setDate(date.getDate() + daysNeeded)
-      return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-    } catch (e) { return 'Unknown' }
   }
 
   const onSaved = () => {
@@ -558,8 +578,8 @@ export default function Home() {
 
   function SectionHeader({ label, colSpan, isLBPork }: { label: string; colSpan: number; isLBPork: boolean }) {
     const collapsed = collapsedSections[label]
-    const sectionFields = SECTIONS.find(s => s.label === label)?.filter
-    const count = sectionFields ? fields.filter(sectionFields).length : 0
+    const sectionFilter = SECTIONS.find(s => s.label === label)?.filter
+    const count = sectionFilter ? fields.filter(sectionFilter).length : 0
     return (
       <tr onClick={() => toggleSection(label)}>
         <td colSpan={colSpan} style={sectionHeaderStyle}>
@@ -567,8 +587,7 @@ export default function Home() {
           {label}
           <span style={{ fontSize: '10px', color: '#4a5a3a', marginLeft: '4px' }}>({count})</span>
           {!isLBPork && (
-            <span
-              onClick={e => { e.stopPropagation(); toggleHideConv(label) }}
+            <span onClick={e => { e.stopPropagation(); toggleHideConv(label) }}
               style={{ marginLeft: 'auto', fontSize: '10px', color: hideConv[label] ? '#cc8800' : '#4a5a3a', cursor: 'pointer', border: `1px solid ${hideConv[label] ? '#cc880066' : '#2a3020'}`, borderRadius: '3px', padding: '1px 7px' }}>
               {hideConv[label] ? 'CONV hidden' : 'hide CONV'}
             </span>
@@ -832,7 +851,7 @@ export default function Home() {
                               const nextAction = getNextAction(gdu)
                               const forecast = nextAction ? getForecastDate(gdu, nextAction.gdu, f.id) : null
                               const priority = i === 0 ? '#ff6b6b' : i < 3 ? '#ffaa44' : '#6b7a5a'
-                              const hasTillage = f.gduSinceLastTillage !== undefined
+                              const hasTillage = f.gduSinceLastTillage !== undefined && f.lastTillageOpName !== undefined
                               return (
                                 <tr key={f.id} style={{ backgroundColor: i % 2 === 0 ? '#111612' : '#0f1410' }}>
                                   <td style={{ padding: '7px 10px', fontSize: '11px', color: priority, borderBottom: '1px solid #1a2016', fontWeight: 'bold', overflow: 'hidden' }}>{i + 1}</td>
