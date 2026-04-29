@@ -27,7 +27,13 @@ type MachineSession = {
 type SortKey = 'date' | 'machine' | 'duration' | 'acres_per_hour'
 type SortDir = 'asc' | 'desc'
 
-const TRACTOR_TYPES = new Set(['Track Tractor', 'Wheel Tractor', 'Tractor'])
+const TRACTOR_TYPES = new Set([
+  'Track Tractor',
+  'Wheel Tractor', 
+  'Tractor',
+  'Two-wheel Drive Tractors - 140 Hp And Above',
+  'Four-wheel Drive Tractor',
+])
 
 function certBadge(status: string | null) {
   switch (status) {
