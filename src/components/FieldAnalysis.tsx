@@ -446,7 +446,7 @@ export default function FieldAnalysis({
                 {/* Session Log — grouped + sortable */}
                 <div style={{ ...s.sec, borderBottom: 'none' }}>
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '14px' }}>
-                    <div style={s.secTitle} style2={{ marginBottom: 0 }}>Session Log</div>
+                    <div style={{ ...s.secTitle, marginBottom: 0 }}>Session Log</div>
                     <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
                       <span style={{ fontSize: '10px', color: '#4a5a3a', letterSpacing: '0.1em', textTransform: 'uppercase' }}>Group by</span>
                       {(['operation', 'date', 'machine'] as const).map(g => (
