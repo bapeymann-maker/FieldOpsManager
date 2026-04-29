@@ -20,6 +20,12 @@ const RELEVANT_TYPES = new Set([
   'Four-wheel Drive Tractor',
 ])
 
+// Known machine roles — overrides type-based logic when both seeding and tillage on same day
+const MACHINE_ROLES: Record<string, string> = {
+  '5400560': 'tillage',  // 9RT 570 #20 UFER
+  '6274249': 'tillage',  // 9620RX #21 UFER
+}
+
 async function getAccessToken() {
   const { data } = await supabase.from('jd_tokens').select('*').eq('id', 1).single()
   if (!data) throw new Error('No token found')
@@ -79,41 +85,51 @@ function findFieldForPoint(lat: number, lon: number, fields: { id: string; bound
   return null
 }
 
-// Cache operation type lookups to avoid repeated DB calls
 const opTypeCache: Record<string, string | null> = {}
 
 async function getOperationTypeForFieldDate(
   fieldId: string,
   date: string,
-  machineType?: string
+  machineType?: string,
+  machineId?: string
 ): Promise<string | null> {
-  const cacheKey = `${fieldId}_${date}_${machineType || ''}`
+  const cacheKey = `${fieldId}_${date}_${machineType || ''}_${machineId || ''}`
   if (cacheKey in opTypeCache) return opTypeCache[cacheKey]
 
+  // Fetch operations for this field/date
   const { data } = await supabase
-  .from('operations')
-  .select('operation_types(name)')
-  .eq('field_id', fieldId)
-  .eq('date', date)
-  .order('date', { ascending: false })
-
-let ops = (data || []).map((op: any) => op.operation_types?.name).filter(Boolean) as string[]
-
-// If no ops found for this date, check previous day (overnight operations)
-if (ops.length === 0) {
-  const prevDate = new Date(date + 'T12:00:00Z')
-  prevDate.setDate(prevDate.getDate() - 1)
-  const prevDateStr = prevDate.toISOString().split('T')[0]
-  const { data: prevData } = await supabase
     .from('operations')
     .select('operation_types(name)')
     .eq('field_id', fieldId)
-    .eq('date', prevDateStr)
+    .eq('date', date)
     .order('date', { ascending: false })
-  ops = (prevData || []).map((op: any) => op.operation_types?.name).filter(Boolean) as string[]
-}
+
+  let ops = (data || []).map((op: any) => op.operation_types?.name).filter(Boolean) as string[]
+
+  // If no ops found for this date, check previous day (overnight operations)
+  if (ops.length === 0) {
+    const prevDate = new Date(date + 'T12:00:00Z')
+    prevDate.setDate(prevDate.getDate() - 1)
+    const prevDateStr = prevDate.toISOString().split('T')[0]
+    const { data: prevData } = await supabase
+      .from('operations')
+      .select('operation_types(name)')
+      .eq('field_id', fieldId)
+      .eq('date', prevDateStr)
+      .order('date', { ascending: false })
+    ops = (prevData || []).map((op: any) => op.operation_types?.name).filter(Boolean) as string[]
+  }
 
   let opType: string | null = null
+
+  // Machine-specific role override — always use tillage for dedicated tillage machines
+  if (machineId && MACHINE_ROLES[machineId] === 'tillage') {
+    opType = ops.find(n => n.startsWith('Tillage')) ||
+             ops.find(n => n.startsWith('Application')) ||
+             ops[0] || null
+    opTypeCache[cacheKey] = opType
+    return opType
+  }
 
   const isPlanter = machineType === 'Planter'
   const isCombine = machineType === 'Combine'
@@ -129,20 +145,16 @@ if (ops.length === 0) {
   const hasApplication = ops.some(n => n.startsWith('Application'))
 
   if (isPlanter) {
-    // Planters always do seeding
     opType = ops.find(n => n === 'Seeding') || ops[0] || null
   } else if (isCombine) {
-    // Combines always do harvest
     opType = ops.find(n => n === 'Harvest') || ops[0] || null
   } else if (isTrackTractor) {
-    // Track tractors: if both seeding and tillage on same day, track tractors pull planters
     if (hasSeeding) opType = 'Seeding'
     else if (hasTillage) opType = ops.find(n => n.startsWith('Tillage')) || null
     else if (hasHarvest) opType = 'Harvest'
     else if (hasApplication) opType = ops.find(n => n.startsWith('Application')) || null
     else opType = ops[0] || null
   } else if (isWheelTractor) {
-    // Wheel tractors: if both seeding and tillage on same day, wheel tractors do tillage
     if (hasTillage && hasSeeding) opType = ops.find(n => n.startsWith('Tillage')) || null
     else if (hasSeeding) opType = 'Seeding'
     else if (hasTillage) opType = ops.find(n => n.startsWith('Tillage')) || null
@@ -150,7 +162,6 @@ if (ops.length === 0) {
     else if (hasApplication) opType = ops.find(n => n.startsWith('Application')) || null
     else opType = ops[0] || null
   } else {
-    // Default: priority order
     opType = ops.find(n => n === 'Seeding') ||
       ops.find(n => n === 'Harvest') ||
       ops.find(n => n.startsWith('Tillage')) ||
@@ -174,7 +185,6 @@ export async function GET(request: Request) {
       'Accept': 'application/vnd.deere.axiom.v3+json'
     }
 
-    // Load all fields with boundaries
     const { data: dbFields } = await supabase
       .from('fields')
       .select('id, name, boundary')
@@ -182,7 +192,6 @@ export async function GET(request: Request) {
 
     const fields = (dbFields || []).filter(f => f.boundary)
 
-    // Get machine list from ISG endpoint
     const machineRes = await fetch(
       `https://api.deere.com/isg/equipment?organizationIds=${ORG_ID}`,
       { headers }
@@ -190,7 +199,6 @@ export async function GET(request: Request) {
     const machineData = await machineRes.json()
     const allMachines = machineData.values || []
 
-    // Filter to relevant types and map principalId for platform API calls
     const relevantMachines = allMachines
       .filter((m: any) => {
         if (machineFilter) return m.id === machineFilter
@@ -201,7 +209,6 @@ export async function GET(request: Request) {
         platformId: m.principalId || m.id
       }))
 
-    // Upsert machines into DB
     for (const m of relevantMachines) {
       await supabase.from('machines').upsert({
         id: m.id,
@@ -227,7 +234,6 @@ export async function GET(request: Request) {
       const platformId = machine.platformId
       const machineType = machine.type?.name || ''
 
-      // Fetch ALL location history pages using platformId
       let allLocations: { lat: number; lon: number; ts: string }[] = []
       let locUrl: string = `${JD_BASE}/machines/${platformId}/locationHistory?startDate=${encodeURIComponent(since)}&endDate=${encodeURIComponent(until)}&itemLimit=100`
 
@@ -258,7 +264,6 @@ export async function GET(request: Request) {
         continue
       }
 
-      // Update machine last seen
       const lastLoc = locations[locations.length - 1]
       await supabase.from('machines').update({
         last_seen_at: lastLoc.ts,
@@ -266,7 +271,6 @@ export async function GET(request: Request) {
         last_lon: lastLoc.lon
       }).eq('id', machineId)
 
-      // Build field sessions from location trail
       let currentFieldId: string | null = null
       let sessionStart: string | null = null
       let lastTs: string | null = null
@@ -281,7 +285,7 @@ export async function GET(request: Request) {
             const durationMinutes = Math.round(durationMs / 60000)
             if (durationMinutes >= 2) {
               const sessionDate = sessionStart.split('T')[0]
-              const opType = await getOperationTypeForFieldDate(currentFieldId, sessionDate, machineType)
+              const opType = await getOperationTypeForFieldDate(currentFieldId, sessionDate, machineType, machineId)
               const { error } = await supabase.from('machine_field_sessions').upsert({
                 machine_id: machineId,
                 field_id: currentFieldId,
@@ -300,13 +304,12 @@ export async function GET(request: Request) {
         lastTs = loc.ts
       }
 
-      // Save last open session
       if (currentFieldId && sessionStart && lastTs) {
         const durationMs = new Date(lastTs).getTime() - new Date(sessionStart).getTime()
         const durationMinutes = Math.round(durationMs / 60000)
         if (durationMinutes >= 2) {
           const sessionDate = sessionStart.split('T')[0]
-          const opType = await getOperationTypeForFieldDate(currentFieldId, sessionDate, machineType)
+          const opType = await getOperationTypeForFieldDate(currentFieldId, sessionDate, machineType, machineId)
           const { error } = await supabase.from('machine_field_sessions').upsert({
             machine_id: machineId,
             field_id: currentFieldId,
