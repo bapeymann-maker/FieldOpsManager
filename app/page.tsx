@@ -415,11 +415,17 @@ export default function Home() {
     let gduSinceLastTillage: number | undefined
     let rainfallSinceLastTillage: number | undefined
     let lastTillageOpName: string | undefined
-    if (lastTillageOp && isInCrop && seedingDate) {
-      const lastTillageDate = lastTillageOp.date
-      lastTillageOpName = lastTillageOp.operation_types?.name
-      if (lastTillageDate > seedingDate) {
-        const recsSince = fieldGDU.filter(g => g.date > lastTillageDate)
+    if (isInCrop && seedingDate) {
+      if (lastTillageOp && lastTillageOp.date > seedingDate) {
+       // Post-seeding tillage exists — count from last tillage date
+       const lastTillageDate = lastTillageOp.date
+       lastTillageOpName = lastTillageOp.operation_types?.name
+       const recsSince = fieldGDU.filter(g => g.date > lastTillageDate)
+       gduSinceLastTillage = Math.round(recsSince.reduce((s, g) => s + g.daily_gdu, 0))
+       rainfallSinceLastTillage = Math.round(recsSince.reduce((s, g) => s + (g.rainfall_inches || 0), 0) * 100) / 100
+      } else {
+        // No post-seeding tillage yet — count from seeding date
+        const recsSince = fieldGDU.filter(g => g.date > seedingDate)
         gduSinceLastTillage = Math.round(recsSince.reduce((s, g) => s + g.daily_gdu, 0))
         rainfallSinceLastTillage = Math.round(recsSince.reduce((s, g) => s + (g.rainfall_inches || 0), 0) * 100) / 100
       }
