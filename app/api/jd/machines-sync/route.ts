@@ -10,7 +10,9 @@ const JD_BASE = 'https://api.deere.com/platform'
 const ORG_ID = '464281'
 
 const RELEVANT_TYPES = new Set([
-  'Track Tractor', 'Wheel Tractor', 'Tractor', 'Combine', 'Sprayer', 'Planter'
+  'Track Tractor', 'Wheel Tractor', 'Tractor', 'Combine', 'Sprayer', 'Planter',
+  'Two-wheel Drive Tractors - 140 Hp And Above',
+  'Four-wheel Drive Tractor'
 ])
 
 async function getAccessToken() {
