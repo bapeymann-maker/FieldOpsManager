@@ -79,10 +79,15 @@ function findFieldForPoint(lat: number, lon: number, fields: { id: string; bound
   return null
 }
 
+// Cache operation type lookups to avoid repeated DB calls
 const opTypeCache: Record<string, string | null> = {}
 
-async function getOperationTypeForFieldDate(fieldId: string, date: string): Promise<string | null> {
-  const cacheKey = `${fieldId}_${date}`
+async function getOperationTypeForFieldDate(
+  fieldId: string,
+  date: string,
+  machineType?: string
+): Promise<string | null> {
+  const cacheKey = `${fieldId}_${date}_${machineType || ''}`
   if (cacheKey in opTypeCache) return opTypeCache[cacheKey]
 
   const { data } = await supabase
@@ -91,17 +96,52 @@ async function getOperationTypeForFieldDate(fieldId: string, date: string): Prom
     .eq('field_id', fieldId)
     .eq('date', date)
     .order('date', { ascending: false })
-    .limit(1)
 
-  const ops = data || []
+  const ops = (data || []).map((op: any) => op.operation_types?.name).filter(Boolean) as string[]
+
   let opType: string | null = null
 
-  for (const op of ops) {
-    const name = (op as any).operation_types?.name || ''
-    if (name === 'Seeding') { opType = 'Seeding'; break }
-    if (name === 'Harvest') { opType = 'Harvest'; break }
-    if (name.startsWith('Tillage')) { opType = name; break }
-    if (name.startsWith('Application')) { opType = name }
+  const isPlanter = machineType === 'Planter'
+  const isCombine = machineType === 'Combine'
+  const isTrackTractor = machineType === 'Track Tractor'
+  const isWheelTractor = machineType === 'Wheel Tractor' ||
+    machineType === 'Two-wheel Drive Tractors - 140 Hp And Above' ||
+    machineType === 'Four-wheel Drive Tractor' ||
+    machineType === 'Tractor'
+
+  const hasSeeding = ops.includes('Seeding')
+  const hasHarvest = ops.includes('Harvest')
+  const hasTillage = ops.some(n => n.startsWith('Tillage'))
+  const hasApplication = ops.some(n => n.startsWith('Application'))
+
+  if (isPlanter) {
+    // Planters always do seeding
+    opType = ops.find(n => n === 'Seeding') || ops[0] || null
+  } else if (isCombine) {
+    // Combines always do harvest
+    opType = ops.find(n => n === 'Harvest') || ops[0] || null
+  } else if (isTrackTractor) {
+    // Track tractors: if both seeding and tillage on same day, track tractors pull planters
+    if (hasSeeding) opType = 'Seeding'
+    else if (hasTillage) opType = ops.find(n => n.startsWith('Tillage')) || null
+    else if (hasHarvest) opType = 'Harvest'
+    else if (hasApplication) opType = ops.find(n => n.startsWith('Application')) || null
+    else opType = ops[0] || null
+  } else if (isWheelTractor) {
+    // Wheel tractors: if both seeding and tillage on same day, wheel tractors do tillage
+    if (hasTillage && hasSeeding) opType = ops.find(n => n.startsWith('Tillage')) || null
+    else if (hasSeeding) opType = 'Seeding'
+    else if (hasTillage) opType = ops.find(n => n.startsWith('Tillage')) || null
+    else if (hasHarvest) opType = 'Harvest'
+    else if (hasApplication) opType = ops.find(n => n.startsWith('Application')) || null
+    else opType = ops[0] || null
+  } else {
+    // Default: priority order
+    opType = ops.find(n => n === 'Seeding') ||
+      ops.find(n => n === 'Harvest') ||
+      ops.find(n => n.startsWith('Tillage')) ||
+      ops.find(n => n.startsWith('Application')) ||
+      ops[0] || null
   }
 
   opTypeCache[cacheKey] = opType
@@ -144,7 +184,6 @@ export async function GET(request: Request) {
       })
       .map((m: any) => ({
         ...m,
-        // principalId is the correct ID for /platform/machines/{id} endpoint
         platformId: m.principalId || m.id
       }))
 
@@ -172,6 +211,7 @@ export async function GET(request: Request) {
     for (const machine of relevantMachines) {
       const machineId = machine.id
       const platformId = machine.platformId
+      const machineType = machine.type?.name || ''
 
       // Fetch ALL location history pages using platformId
       let allLocations: { lat: number; lon: number; ts: string }[] = []
@@ -227,7 +267,7 @@ export async function GET(request: Request) {
             const durationMinutes = Math.round(durationMs / 60000)
             if (durationMinutes >= 2) {
               const sessionDate = sessionStart.split('T')[0]
-              const opType = await getOperationTypeForFieldDate(currentFieldId, sessionDate)
+              const opType = await getOperationTypeForFieldDate(currentFieldId, sessionDate, machineType)
               const { error } = await supabase.from('machine_field_sessions').upsert({
                 machine_id: machineId,
                 field_id: currentFieldId,
@@ -252,7 +292,7 @@ export async function GET(request: Request) {
         const durationMinutes = Math.round(durationMs / 60000)
         if (durationMinutes >= 2) {
           const sessionDate = sessionStart.split('T')[0]
-          const opType = await getOperationTypeForFieldDate(currentFieldId, sessionDate)
+          const opType = await getOperationTypeForFieldDate(currentFieldId, sessionDate, machineType)
           const { error } = await supabase.from('machine_field_sessions').upsert({
             machine_id: machineId,
             field_id: currentFieldId,
