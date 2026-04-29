@@ -91,13 +91,27 @@ async function getOperationTypeForFieldDate(
   if (cacheKey in opTypeCache) return opTypeCache[cacheKey]
 
   const { data } = await supabase
+  .from('operations')
+  .select('operation_types(name)')
+  .eq('field_id', fieldId)
+  .eq('date', date)
+  .order('date', { ascending: false })
+
+let ops = (data || []).map((op: any) => op.operation_types?.name).filter(Boolean) as string[]
+
+// If no ops found for this date, check previous day (overnight operations)
+if (ops.length === 0) {
+  const prevDate = new Date(date + 'T12:00:00Z')
+  prevDate.setDate(prevDate.getDate() - 1)
+  const prevDateStr = prevDate.toISOString().split('T')[0]
+  const { data: prevData } = await supabase
     .from('operations')
     .select('operation_types(name)')
     .eq('field_id', fieldId)
-    .eq('date', date)
+    .eq('date', prevDateStr)
     .order('date', { ascending: false })
-
-  const ops = (data || []).map((op: any) => op.operation_types?.name).filter(Boolean) as string[]
+  ops = (prevData || []).map((op: any) => op.operation_types?.name).filter(Boolean) as string[]
+}
 
   let opType: string | null = null
 
