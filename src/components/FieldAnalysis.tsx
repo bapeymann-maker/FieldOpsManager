@@ -497,6 +497,49 @@ export default function FieldAnalysis({
                     )}
                   </div>
                 </div>
+                {/* Efficiency by Operation Type */}
+<div style={secStyle}>
+  <div style={secTitle}>Efficiency by Operation</div>
+  <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+    <thead>
+      <tr>
+        {['Operation', 'Sessions', 'Tractor Hrs', 'Avg Ac/Hr', 'Min/Acre'].map(h => (
+          <th key={h} style={{ ...thBase, color: '#4a5a3a' }}>{h}</th>
+        ))}
+      </tr>
+    </thead>
+    <tbody>
+      {(() => {
+        const opGroups: Record<string, { minutes: number; sessions: number }> = {}
+        for (const s of workingSessions) {
+          if (!TRACTOR_TYPES.has(s.machines?.type || '')) continue
+          const op = s.operation_type || 'Unknown'
+          if (!opGroups[op]) opGroups[op] = { minutes: 0, sessions: 0 }
+          opGroups[op].minutes += s.duration_minutes
+          opGroups[op].sessions++
+        }
+        return Object.entries(opGroups)
+          .sort((a, b) => b[1].minutes - a[1].minutes)
+          .map(([op, data], i) => {
+            const hrs = data.minutes / 60
+            const acHr = field.acres && hrs > 0 ? Math.round((field.acres / hrs) * 10) / 10 : null
+            const minPerAcre = acHr ? Math.round(60 / acHr) : null
+            return (
+              <tr key={op}>
+                <td style={tdStyle(i)}>
+                  <span style={{ fontSize: '11px', color: getOpColor(op), backgroundColor: getOpColor(op) + '18', padding: '2px 7px', borderRadius: '3px', border: `1px solid ${getOpColor(op)}44` }}>{op}</span>
+                </td>
+                <td style={tdStyle(i)}>{data.sessions}</td>
+                <td style={tdStyle(i)}><span style={{ color: '#a8c888' }}>{hrs.toFixed(1)}</span></td>
+                <td style={tdStyle(i)}>{acHr ? <span style={{ color: '#aad4ff', fontWeight: 'bold' }}>{acHr}</span> : '—'}</td>
+                <td style={tdStyle(i)}>{minPerAcre ? <span style={{ color: '#8a9a6a' }}>{minPerAcre}</span> : '—'}</td>
+              </tr>
+            )
+          })
+      })()}
+    </tbody>
+  </table>
+</div>
 
                 {/* Per Machine Breakdown */}
                 <div style={secStyle}>
