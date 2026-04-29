@@ -27,6 +27,8 @@ type MachineSession = {
 type SortKey = 'date' | 'machine' | 'duration' | 'acres_per_hour'
 type SortDir = 'asc' | 'desc'
 
+const TRACTOR_TYPES = new Set(['Track Tractor', 'Wheel Tractor', 'Tractor'])
+
 function certBadge(status: string | null) {
   switch (status) {
     case 'Certified': return { label: 'O', color: '#4aaa4a' }
@@ -145,15 +147,31 @@ export default function FieldAnalysis({
   const bestCorn = cornYields.length > 0 ? cornYields.reduce((a, b) => (a.actual_yield || 0) > (b.actual_yield || 0) ? a : b) : null
   const currentYearYield = yields.find(y => y.year === new Date().getFullYear())
 
+  // Split sessions by machine role
   const workingSessions = sessions.filter(s => s.duration_minutes >= 20)
-  const totalMachineHours = workingSessions.reduce((sum, s) => sum + s.duration_minutes, 0) / 60
+  const tractorSessions = workingSessions.filter(s => TRACTOR_TYPES.has(s.machines?.type || ''))
+  const planterSessions = workingSessions.filter(s => s.machines?.type === 'Planter')
+
+  // Efficiency metrics based on tractor time only (not double-counting planter)
+  const totalTractorMinutes = tractorSessions.reduce((sum, s) => sum + s.duration_minutes, 0)
+  const totalPlanterMinutes = planterSessions.reduce((sum, s) => sum + s.duration_minutes, 0)
+  const totalMachineHours = totalTractorMinutes / 60
+
+  // Downtime = planter time minus tractor time (turns, headlands, seed refills)
+  // If planter was in field longer than tractor, that extra time = stops/refills
+  const downtimeMinutes = totalPlanterMinutes > 0 && totalTractorMinutes > 0
+    ? Math.max(0, totalPlanterMinutes - totalTractorMinutes)
+    : null
+
   const uniqueMachines = [...new Set(sessions.map(s => s.machines?.name).filter(Boolean))]
   const acresPerHour = field.acres && totalMachineHours > 0
     ? Math.round((field.acres / totalMachineHours) * 10) / 10
     : null
 
-  function getAcHr(durationMinutes: number) {
+  function getAcHr(durationMinutes: number, machineType: string | null) {
     if (!field.acres || durationMinutes < 20) return null
+    // Only show ac/hr for tractors pulling equipment, not implements themselves
+    if (machineType && !TRACTOR_TYPES.has(machineType)) return null
     return Math.round((field.acres / (durationMinutes / 60)) * 10) / 10
   }
 
@@ -166,8 +184,8 @@ export default function FieldAnalysis({
     }
   }
 
-  const sortedSessions = useMemo(() => {
-    return [...sessions].sort((a, b) => {
+  function sortList(list: MachineSession[]) {
+    return [...list].sort((a, b) => {
       if (sortKey === 'date') {
         const diff = new Date(a.entered_at).getTime() - new Date(b.entered_at).getTime()
         return sortDir === 'asc' ? diff : -diff
@@ -181,19 +199,26 @@ export default function FieldAnalysis({
         return sortDir === 'asc' ? diff : -diff
       }
       if (sortKey === 'acres_per_hour') {
-        const aVal = getAcHr(a.duration_minutes) || 0
-        const bVal = getAcHr(b.duration_minutes) || 0
+        const aVal = getAcHr(a.duration_minutes, a.machines?.type || null) || 0
+        const bVal = getAcHr(b.duration_minutes, b.machines?.type || null) || 0
         const diff = aVal - bVal
         return sortDir === 'asc' ? diff : -diff
       }
       return 0
     })
-  }, [sessions, sortKey, sortDir])
+  }
 
-  const machineMap: Record<string, { name: string; type: string | null; totalMinutes: number; visits: number }> = {}
+  const machineMap: Record<string, { name: string; type: string | null; totalMinutes: number; visits: number; isTractor: boolean }> = {}
   for (const s of workingSessions) {
     const mid = s.machine_id
-    if (!machineMap[mid]) machineMap[mid] = { name: s.machines?.name || mid, type: s.machines?.type || null, totalMinutes: 0, visits: 0 }
+    if (!machineMap[mid]) {
+      machineMap[mid] = {
+        name: s.machines?.name || mid,
+        type: s.machines?.type || null,
+        totalMinutes: 0, visits: 0,
+        isTractor: TRACTOR_TYPES.has(s.machines?.type || '')
+      }
+    }
     machineMap[mid].totalMinutes += s.duration_minutes
     machineMap[mid].visits++
   }
@@ -203,34 +228,30 @@ export default function FieldAnalysis({
     return <span style={{ color: '#c8d4a0', marginLeft: '4px' }}>{sortDir === 'asc' ? '↑' : '↓'}</span>
   }
 
-  function renderSessionRows(list: MachineSession[]) {
-    // Apply sort to the provided list
-    const sorted = [...list].sort((a, b) => {
-      if (sortKey === 'date') {
-        const diff = new Date(a.entered_at).getTime() - new Date(b.entered_at).getTime()
-        return sortDir === 'asc' ? diff : -diff
-      }
-      if (sortKey === 'machine') {
-        const diff = (a.machines?.name || '').localeCompare(b.machines?.name || '')
-        return sortDir === 'asc' ? diff : -diff
-      }
-      if (sortKey === 'duration') {
-        const diff = a.duration_minutes - b.duration_minutes
-        return sortDir === 'asc' ? diff : -diff
-      }
-      if (sortKey === 'acres_per_hour') {
-        const aVal = getAcHr(a.duration_minutes) || 0
-        const bVal = getAcHr(b.duration_minutes) || 0
-        const diff = aVal - bVal
-        return sortDir === 'asc' ? diff : -diff
-      }
-      return 0
-    })
+  function SessionTableHeader() {
+    return (
+      <thead>
+        <tr>
+          <th style={{ ...thBase, color: sortKey === 'date' ? '#c8d4a0' : '#4a5a3a', cursor: 'pointer' }} onClick={() => handleSort('date')}>Date <SortArrow k="date" /></th>
+          <th style={{ ...thBase, color: sortKey === 'machine' ? '#c8d4a0' : '#4a5a3a', cursor: 'pointer' }} onClick={() => handleSort('machine')}>Machine <SortArrow k="machine" /></th>
+          <th style={{ ...thBase, color: '#4a5a3a' }}>Operation</th>
+          <th style={{ ...thBase, color: '#4a5a3a' }}>Entered</th>
+          <th style={{ ...thBase, color: '#4a5a3a' }}>Exited</th>
+          <th style={{ ...thBase, color: sortKey === 'duration' ? '#c8d4a0' : '#4a5a3a', cursor: 'pointer' }} onClick={() => handleSort('duration')}>Duration <SortArrow k="duration" /></th>
+          <th style={{ ...thBase, color: sortKey === 'acres_per_hour' ? '#c8d4a0' : '#4a5a3a', cursor: 'pointer' }} onClick={() => handleSort('acres_per_hour')}>Ac/Hr <SortArrow k="acres_per_hour" /></th>
+        </tr>
+      </thead>
+    )
+  }
 
+  function renderSessionRows(list: MachineSession[]) {
+    const sorted = sortList(list)
     return sorted.map((session, i) => {
-      const acHr = getAcHr(session.duration_minutes)
+      const machineType = session.machines?.type || null
+      const isTractor = TRACTOR_TYPES.has(machineType || '')
+      const isPlanter = machineType === 'Planter'
+      const acHr = getAcHr(session.duration_minutes, machineType)
       const isShort = session.duration_minutes < 20
-      const opGroup = getOpGroup(session.operation_type)
       const opColor = getOpColor(session.operation_type)
       return (
         <tr key={session.id}>
@@ -238,13 +259,16 @@ export default function FieldAnalysis({
             <span style={{ fontSize: '11px', color: '#8a9a6a' }}>{formatDateShort(session.date)}</span>
           </td>
           <td style={tdStyle(i)}>
-            <span style={{ color: isShort ? '#4a5a3a' : '#c8d4a0' }}>{session.machines?.name || session.machine_id}</span>
-            <span style={{ fontSize: '10px', color: '#4a5a3a', marginLeft: '6px' }}>{session.machines?.type || ''}</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <span style={{ color: isShort ? '#4a5a3a' : '#c8d4a0' }}>{session.machines?.name || session.machine_id}</span>
+              {isPlanter && <span style={{ fontSize: '9px', color: '#4a6a8a', backgroundColor: '#1a2a3a', padding: '1px 5px', borderRadius: '3px', border: '1px solid #2a4a5a' }}>IMPL</span>}
+            </div>
+            <div style={{ fontSize: '10px', color: '#4a5a3a', marginTop: '1px' }}>{machineType || ''}</div>
           </td>
           <td style={tdStyle(i)}>
-            <span style={{ fontSize: '11px', color: opColor, backgroundColor: opColor + '18', padding: '2px 7px', borderRadius: '3px', border: `1px solid ${opColor}44` }}>
-              {session.operation_type || 'Unknown'}
-            </span>
+            {session.operation_type
+              ? <span style={{ fontSize: '11px', color: opColor, backgroundColor: opColor + '18', padding: '2px 7px', borderRadius: '3px', border: `1px solid ${opColor}44` }}>{session.operation_type}</span>
+              : <span style={{ fontSize: '11px', color: '#4a5a3a' }}>Unknown</span>}
           </td>
           <td style={tdStyle(i)}>
             <span style={{ color: '#6b7a5a', fontSize: '11px' }}>{formatTime(session.entered_at)}</span>
@@ -259,35 +283,11 @@ export default function FieldAnalysis({
           <td style={tdStyle(i)}>
             {acHr
               ? <span style={{ color: '#aad4ff' }}>{acHr}</span>
-              : <span style={{ color: '#3a4a2a' }}>—</span>}
+              : <span style={{ color: '#3a4a2a', fontSize: '11px' }}>{!isTractor ? 'impl' : '—'}</span>}
           </td>
         </tr>
       )
     })
-  }
-
-  function SessionTableHeader() {
-    return (
-      <thead>
-        <tr>
-          <th style={{ ...thBase, color: sortKey === 'date' ? '#c8d4a0' : '#4a5a3a', cursor: 'pointer' }} onClick={() => handleSort('date')}>
-            Date <SortArrow k="date" />
-          </th>
-          <th style={{ ...thBase, color: sortKey === 'machine' ? '#c8d4a0' : '#4a5a3a', cursor: 'pointer' }} onClick={() => handleSort('machine')}>
-            Machine <SortArrow k="machine" />
-          </th>
-          <th style={{ ...thBase, color: '#4a5a3a' }}>Operation</th>
-          <th style={{ ...thBase, color: '#4a5a3a' }}>Entered</th>
-          <th style={{ ...thBase, color: '#4a5a3a' }}>Exited</th>
-          <th style={{ ...thBase, color: sortKey === 'duration' ? '#c8d4a0' : '#4a5a3a', cursor: 'pointer' }} onClick={() => handleSort('duration')}>
-            Duration <SortArrow k="duration" />
-          </th>
-          <th style={{ ...thBase, color: sortKey === 'acres_per_hour' ? '#c8d4a0' : '#4a5a3a', cursor: 'pointer' }} onClick={() => handleSort('acres_per_hour')}>
-            Ac/Hr <SortArrow k="acres_per_hour" />
-          </th>
-        </tr>
-      </thead>
-    )
   }
 
   const secStyle = { padding: '20px 28px', borderBottom: '1px solid #1a2016' }
@@ -458,15 +458,15 @@ export default function FieldAnalysis({
                   <div style={secTitle}>Field Efficiency Summary</div>
                   <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
                     <div style={statCard}>
-                      <div style={statLabel}>Total Machine Time</div>
+                      <div style={statLabel}>Tractor Time</div>
                       <div><span style={{ fontSize: '22px', color: '#c8d4a0' }}>{totalMachineHours.toFixed(1)}</span><span style={{ fontSize: '11px', color: '#6b7a5a', marginLeft: '4px' }}>hrs</span></div>
-                      <div style={{ fontSize: '11px', color: '#6b7a5a', marginTop: '4px' }}>{workingSessions.length} work sessions</div>
+                      <div style={{ fontSize: '11px', color: '#6b7a5a', marginTop: '4px' }}>{tractorSessions.length} tractor sessions</div>
                     </div>
                     {acresPerHour && (
                       <div style={statCard}>
                         <div style={statLabel}>Avg Ac/Hour</div>
                         <div><span style={{ fontSize: '22px', color: '#c8d4a0' }}>{acresPerHour}</span><span style={{ fontSize: '11px', color: '#6b7a5a', marginLeft: '4px' }}>ac/hr</span></div>
-                        <div style={{ fontSize: '11px', color: '#6b7a5a', marginTop: '4px' }}>all operations</div>
+                        <div style={{ fontSize: '11px', color: '#6b7a5a', marginTop: '4px' }}>tractor passes only</div>
                       </div>
                     )}
                     <div style={statCard}>
@@ -481,6 +481,14 @@ export default function FieldAnalysis({
                         <div style={{ fontSize: '11px', color: '#6b7a5a', marginTop: '4px' }}>avg per acre</div>
                       </div>
                     )}
+                    {downtimeMinutes !== null && downtimeMinutes > 0 && (
+                      <div style={{ ...statCard, border: '1px solid #cc880033' }}>
+                        <div style={{ ...statLabel, color: '#cc8800' }}>Est. Downtime</div>
+                        <div><span style={{ fontSize: '22px', color: '#cc8800' }}>{formatDuration(downtimeMinutes)}</span></div>
+                        <div style={{ fontSize: '11px', color: '#6b7a5a', marginTop: '4px' }}>turns + seed refills</div>
+                        <div style={{ fontSize: '10px', color: '#4a5a3a', marginTop: '2px' }}>planter time − tractor time</div>
+                      </div>
+                    )}
                   </div>
                 </div>
 
@@ -488,18 +496,38 @@ export default function FieldAnalysis({
                 <div style={secStyle}>
                   <div style={secTitle}>Time by Machine</div>
                   <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                    <thead><tr>{['Machine', 'Type', 'Total Time', 'Visits', 'Avg/Visit', 'Ac/Hr'].map(h => (<th key={h} style={{ ...thBase, color: '#4a5a3a' }}>{h}</th>))}</tr></thead>
+                    <thead>
+                      <tr>
+                        {['Machine', 'Role', 'Total Time', 'Visits', 'Avg/Visit', 'Ac/Hr'].map(h => (
+                          <th key={h} style={{ ...thBase, color: '#4a5a3a' }}>{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
                     <tbody>
-                      {Object.values(machineMap).sort((a, b) => b.totalMinutes - a.totalMinutes).map((m, i) => {
-                        const machineAcHr = field.acres ? Math.round((field.acres / (m.totalMinutes / 60)) * 10) / 10 : null
+                      {Object.values(machineMap).sort((a, b) => {
+                        // Tractors first, then implements
+                        if (a.isTractor !== b.isTractor) return a.isTractor ? -1 : 1
+                        return b.totalMinutes - a.totalMinutes
+                      }).map((m, i) => {
+                        const machineAcHr = m.isTractor && field.acres
+                          ? Math.round((field.acres / (m.totalMinutes / 60)) * 10) / 10
+                          : null
                         return (
                           <tr key={m.name}>
                             <td style={tdStyle(i)}><span style={{ color: '#c8d4a0' }}>{m.name}</span></td>
-                            <td style={tdStyle(i)}><span style={{ fontSize: '11px', color: '#6b7a5a' }}>{m.type || '—'}</span></td>
+                            <td style={tdStyle(i)}>
+                              <span style={{ fontSize: '11px', color: m.isTractor ? '#a8b888' : '#4a6a8a' }}>
+                                {m.isTractor ? m.type : 'Implement'}
+                              </span>
+                            </td>
                             <td style={tdStyle(i)}><span style={{ color: '#a8c888' }}>{formatDuration(m.totalMinutes)}</span></td>
                             <td style={tdStyle(i)}>{m.visits}</td>
                             <td style={tdStyle(i)}>{formatDuration(Math.round(m.totalMinutes / m.visits))}</td>
-                            <td style={tdStyle(i)}>{machineAcHr ? <span style={{ color: '#aad4ff' }}>{machineAcHr}</span> : '—'}</td>
+                            <td style={tdStyle(i)}>
+                              {machineAcHr
+                                ? <span style={{ color: '#aad4ff' }}>{machineAcHr}</span>
+                                : <span style={{ color: '#3a4a2a', fontSize: '11px' }}>{m.isTractor ? '—' : 'impl'}</span>}
+                            </td>
                           </tr>
                         )
                       })}
@@ -525,13 +553,13 @@ export default function FieldAnalysis({
                   {groupBy === 'operation' && OP_GROUP_ORDER.map(group => {
                     const groupSessions = sessions.filter(s => getOpGroup(s.operation_type) === group)
                     if (groupSessions.length === 0) return null
-                    const groupHours = groupSessions.filter(s => s.duration_minutes >= 20).reduce((sum, s) => sum + s.duration_minutes, 0) / 60
+                    const groupTractorMins = groupSessions.filter(s => s.duration_minutes >= 20 && TRACTOR_TYPES.has(s.machines?.type || '')).reduce((sum, s) => sum + s.duration_minutes, 0)
                     return (
                       <div key={group} style={{ marginBottom: '24px' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '8px', paddingBottom: '6px', borderBottom: `1px solid ${getOpGroupColor(group)}33` }}>
                           <div style={{ width: '8px', height: '8px', borderRadius: '2px', backgroundColor: getOpGroupColor(group), flexShrink: 0 }} />
                           <span style={{ fontSize: '11px', color: getOpGroupColor(group), letterSpacing: '0.1em', textTransform: 'uppercase' }}>{group}</span>
-                          <span style={{ fontSize: '10px', color: '#4a5a3a' }}>{groupSessions.length} sessions — {groupHours.toFixed(1)} hrs</span>
+                          <span style={{ fontSize: '10px', color: '#4a5a3a' }}>{groupSessions.length} sessions — {(groupTractorMins / 60).toFixed(1)} tractor hrs</span>
                         </div>
                         <div style={{ overflowX: 'auto' }}>
                           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
@@ -547,12 +575,12 @@ export default function FieldAnalysis({
                     const dates = [...new Set(sessions.map(s => s.date))].sort((a, b) => b.localeCompare(a))
                     return dates.map(date => {
                       const dateSessions = sessions.filter(s => s.date === date)
-                      const dateHours = dateSessions.filter(s => s.duration_minutes >= 20).reduce((sum, s) => sum + s.duration_minutes, 0) / 60
+                      const dateTractorMins = dateSessions.filter(s => s.duration_minutes >= 20 && TRACTOR_TYPES.has(s.machines?.type || '')).reduce((sum, s) => sum + s.duration_minutes, 0)
                       return (
                         <div key={date} style={{ marginBottom: '24px' }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '8px', paddingBottom: '6px', borderBottom: '1px solid #2a3020' }}>
                             <span style={{ fontSize: '11px', color: '#8a9a6a', letterSpacing: '0.1em' }}>{formatDateShort(date)}</span>
-                            <span style={{ fontSize: '10px', color: '#4a5a3a' }}>{dateSessions.length} sessions — {dateHours.toFixed(1)} hrs</span>
+                            <span style={{ fontSize: '10px', color: '#4a5a3a' }}>{dateSessions.length} sessions — {(dateTractorMins / 60).toFixed(1)} tractor hrs</span>
                           </div>
                           <div style={{ overflowX: 'auto' }}>
                             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
@@ -570,12 +598,15 @@ export default function FieldAnalysis({
                     return machineIds.map(mid => {
                       const machineSessions = sessions.filter(s => s.machine_id === mid)
                       const machineName = machineSessions[0]?.machines?.name || mid
-                      const machineHours = machineSessions.filter(s => s.duration_minutes >= 20).reduce((sum, s) => sum + s.duration_minutes, 0) / 60
+                      const machineType = machineSessions[0]?.machines?.type || null
+                      const isTractor = TRACTOR_TYPES.has(machineType || '')
+                      const machineWorkMins = machineSessions.filter(s => s.duration_minutes >= 20).reduce((sum, s) => sum + s.duration_minutes, 0)
                       return (
                         <div key={mid} style={{ marginBottom: '24px' }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '8px', paddingBottom: '6px', borderBottom: '1px solid #2a3020' }}>
                             <span style={{ fontSize: '11px', color: '#a8b888', letterSpacing: '0.1em' }}>{machineName}</span>
-                            <span style={{ fontSize: '10px', color: '#4a5a3a' }}>{machineSessions.length} sessions — {machineHours.toFixed(1)} hrs</span>
+                            <span style={{ fontSize: '10px', color: isTractor ? '#4a5a3a' : '#4a6a8a' }}>{isTractor ? machineType : 'Implement'}</span>
+                            <span style={{ fontSize: '10px', color: '#4a5a3a' }}>{machineSessions.length} sessions — {(machineWorkMins / 60).toFixed(1)} hrs</span>
                           </div>
                           <div style={{ overflowX: 'auto' }}>
                             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
