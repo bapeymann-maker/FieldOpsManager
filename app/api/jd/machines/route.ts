@@ -6,7 +6,7 @@ const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
 )
 
-const ORG_ID = '464281'
+const JD_BASE = 'https://api.deere.com/platform'
 
 async function getAccessToken() {
   const { data } = await supabase.from('jd_tokens').select('*').eq('id', 1).single()
@@ -22,46 +22,24 @@ export async function GET() {
       'Accept': 'application/vnd.deere.axiom.v3+json'
     }
 
-    // Fetch machine list from ISG endpoint
-    const machineRes = await fetch(
-      `https://api.deere.com/isg/equipment?organizationIds=${ORG_ID}`,
-      { headers }
-    )
-    const machineText = await machineRes.text()
-    let machineData: any = null
-    try { machineData = JSON.parse(machineText) } catch (e) { }
+    // Test machine 1309550 (Ufer DB60 planter — had recent activity)
+    const machineId = '1309550'
+    const results: Record<string, number> = {}
 
-    // If we got machines, try fetching location for the first one
-    let locationSample: any = null
-    let breadcrumbSample: any = null
-    if (machineData?.values?.length > 0) {
-      const firstMachine = machineData.values[0]
-      const machineId = firstMachine.id || firstMachine.machineId
-
-      // Try location history
-      const locRes = await fetch(
-        `https://api.deere.com/platform/machines/${machineId}/locationHistory`,
+    // Test different lookback windows
+    const windows = [7, 14, 30, 60, 90, 180, 365]
+    for (const days of windows) {
+      const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString()
+      const until = new Date().toISOString()
+      const res = await fetch(
+        `${JD_BASE}/machines/${machineId}/locationHistory?startDate=${encodeURIComponent(since)}&endDate=${encodeURIComponent(until)}&itemLimit=1`,
         { headers }
       )
-      locationSample = { status: locRes.status, body: (await locRes.text()).slice(0, 300) }
-
-      // Try breadcrumbs
-      const bcRes = await fetch(
-        `https://api.deere.com/platform/machines/${machineId}/breadcrumbs`,
-        { headers }
-      )
-      breadcrumbSample = { status: bcRes.status, body: (await bcRes.text()).slice(0, 300) }
+      const data = await res.json()
+      results[`${days}_days`] = data.total || 0
     }
 
-    return NextResponse.json({
-      machines_status: machineRes.status,
-      machines_count: machineData?.values?.length || 0,
-      first_machine: machineData?.values?.[0] || null,
-      all_machine_names: machineData?.values?.map((m: any) => ({ id: m.id || m.machineId, name: m.name || m.machineDescriptor })) || [],
-      location_sample: locationSample,
-      breadcrumb_sample: breadcrumbSample,
-      raw_if_error: machineRes.status !== 200 ? machineText.slice(0, 500) : null
-    })
+    return NextResponse.json({ machine: machineId, results })
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 })
   }
