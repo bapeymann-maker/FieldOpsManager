@@ -3,7 +3,7 @@ name: Nightly JD Sync
 on:
   schedule:
     - cron: '0 7 * * *'  # 7 AM UTC = 2 AM CDT
-    - cron: '0 19 * * *'  # 2:00 PM CDT (19:00 UTC)
+    
   workflow_dispatch:      # allows manual trigger from GitHub Actions tab
 
 jobs:
@@ -30,3 +30,9 @@ jobs:
         run: node scripts/sync-gdus.mjs
         env:
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+
+      - name: Sync machine locations
+        run: |
+          curl -X GET "${{ secrets.APP_URL }}/api/jd/machines-sync?hours=36" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            -f
