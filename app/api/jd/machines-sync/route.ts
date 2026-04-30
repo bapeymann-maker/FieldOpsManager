@@ -375,13 +375,14 @@ export async function GET(request: Request) {
 
         // Check if we cross an engine-off split point between last ping and this ping
         if (sessionStart && lastTs && currentFieldId && splitPoints.length > 0) {
-          for (const split of splitPoints) {
-            if (split > lastTs && split <= loc.ts) {
-              await saveSession(machineId, currentFieldId, sessionStart, split, machineType, totalSessions)
-              sessionStart = loc.ts
-              break
-            }
-          }
+          const activeSplits = splitPoints
+  .filter(s => s > lastTs! && s <= loc.ts)
+  .sort()
+
+for (const split of activeSplits) {
+  await saveSession(machineId, currentFieldId, sessionStart, split, machineType, totalSessions)
+  sessionStart = split
+}
         }
 
         if (fieldId !== currentFieldId) {
