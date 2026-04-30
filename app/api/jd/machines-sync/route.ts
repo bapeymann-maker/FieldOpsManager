@@ -20,7 +20,6 @@ const RELEVANT_TYPES = new Set([
   'Four-wheel Drive Tractor',
 ])
 
-// Known machine roles — overrides type-based logic when both seeding and tillage on same day
 const MACHINE_ROLES: Record<string, string> = {
   '5400560': 'tillage',  // 9RT 570 #20 UFER
   '6274249': 'tillage',  // 9620RX #21 UFER
@@ -28,8 +27,6 @@ const MACHINE_ROLES: Record<string, string> = {
   '4844531': 'seeding',  // 8RT 370 #3 Ufer
 }
 
-// Engine off for longer than this = end current session (parking, breakdown, overnight)
-// Turns, refills, headlands (<60 min) are kept as part of the session
 const ENGINE_OFF_SPLIT_MINUTES = 60
 
 async function getAccessToken() {
@@ -84,53 +81,32 @@ function extractCoords(geometry: any): number[][] {
 function findFieldForPoint(lat: number, lon: number, fields: { id: string; boundary: any }[]): string | null {
   for (const field of fields) {
     const coords = extractCoords(field.boundary)
-    if (coords.length > 0 && pointInPolygon(lat, lon, coords)) {
-      return field.id
-    }
+    if (coords.length > 0 && pointInPolygon(lat, lon, coords)) return field.id
   }
   return null
 }
 
-// Find the engine state at a given timestamp by finding nearest device state report
-function getEngineStateAtTime(
-  ts: string,
-  stateReports: { time: string; engineState: number }[]
-): number {
-  if (stateReports.length === 0) return 1 // assume on if no data
-  const tsMs = new Date(ts).getTime()
-  let nearest = stateReports[0]
-  let nearestDiff = Math.abs(new Date(stateReports[0].time).getTime() - tsMs)
-  for (const r of stateReports) {
-    const diff = Math.abs(new Date(r.time).getTime() - tsMs)
-    if (diff < nearestDiff) { nearest = r; nearestDiff = diff }
-  }
-  // Only use state report if within 2 hours of the ping
-  if (nearestDiff > 2 * 60 * 60 * 1000) return 1
-  return nearest.engineState
-}
-
-// Find continuous engine-off periods > threshold and return split points
+// Find continuous engine-off periods > threshold and return split point timestamps
 function getEngineOffSplits(
   stateReports: { time: string; engineState: number }[],
   sinceTs: string,
   untilTs: string
 ): string[] {
   if (stateReports.length === 0) return []
-  
-  const splits: string[] = []
+
   const sinceMs = new Date(sinceTs).getTime()
   const untilMs = new Date(untilTs).getTime()
-  
-  // Filter to window and sort ascending
+
   const reports = stateReports
     .filter(r => {
       const t = new Date(r.time).getTime()
       return t >= sinceMs && t <= untilMs
     })
     .sort((a, b) => new Date(a.time).getTime() - new Date(b.time).getTime())
-  
+
+  const splits: string[] = []
   let engineOffStart: string | null = null
-  
+
   for (const r of reports) {
     if (r.engineState === 0) {
       if (!engineOffStart) engineOffStart = r.time
@@ -139,8 +115,7 @@ function getEngineOffSplits(
         const offMs = new Date(r.time).getTime() - new Date(engineOffStart).getTime()
         const offMinutes = offMs / 60000
         if (offMinutes >= ENGINE_OFF_SPLIT_MINUTES) {
-          // This is a significant engine-off period — mark as split point
-          // Split at the midpoint between engine off and engine on
+          // Split at midpoint of the engine-off window
           const splitMs = new Date(engineOffStart).getTime() + offMs / 2
           splits.push(new Date(splitMs).toISOString())
         }
@@ -148,7 +123,7 @@ function getEngineOffSplits(
       }
     }
   }
-  
+
   return splits
 }
 
@@ -172,7 +147,7 @@ async function getOperationTypeForFieldDate(
 
   let ops = (data || []).map((op: any) => op.operation_types?.name).filter(Boolean) as string[]
 
-  // If no ops found for this date, check previous day (overnight operations)
+  // Check previous day for overnight operations
   if (ops.length === 0) {
     const prevDate = new Date(date + 'T12:00:00Z')
     prevDate.setDate(prevDate.getDate() - 1)
@@ -188,7 +163,6 @@ async function getOperationTypeForFieldDate(
 
   let opType: string | null = null
 
-  // Machine-specific role override
   if (machineId && MACHINE_ROLES[machineId]) {
     const role = MACHINE_ROLES[machineId]
     if (role === 'tillage') {
@@ -327,7 +301,7 @@ export async function GET(request: Request) {
       const platformId = machine.platformId
       const machineType = machine.type?.name || ''
 
-      // Fetch location history
+      // Fetch location history (paginated)
       let allLocations: { lat: number; lon: number; ts: string }[] = []
       let locUrl: string = `${JD_BASE}/machines/${platformId}/locationHistory?startDate=${encodeURIComponent(since)}&endDate=${encodeURIComponent(until)}&itemLimit=100`
 
@@ -351,21 +325,35 @@ export async function GET(request: Request) {
         continue
       }
 
-      // Fetch device state reports for engine state correlation
+      // Fetch device state reports in 7-day chunks to avoid 250-record cap
       let stateReports: { time: string; engineState: number }[] = []
-      let stateUrl: string = `${JD_BASE}/machines/${platformId}/deviceStateReports?startDate=${encodeURIComponent(since)}&endDate=${encodeURIComponent(until)}&itemLimit=100`
+      const sinceDate = new Date(since)
+      const untilDate = new Date(until)
+      let chunkStart = new Date(sinceDate)
 
-      while (stateUrl) {
-        const stateRes = await fetch(stateUrl, { headers })
-        if (!stateRes.ok) { stateUrl = ''; break }
-        const stateData = await stateRes.json()
-        const batch = (stateData.values || [])
-          .filter((r: any) => r.time != null)
-          .map((r: any) => ({ time: r.time, engineState: r.engineState ?? 1 }))
-        stateReports = stateReports.concat(batch)
-        const nextLink = stateData.links?.find((l: any) => l.rel === 'nextPage')
-        stateUrl = nextLink?.uri || ''
-        await new Promise(r => setTimeout(r, 100))
+      while (chunkStart < untilDate) {
+        const chunkEnd = new Date(Math.min(
+          chunkStart.getTime() + 7 * 24 * 60 * 60 * 1000,
+          untilDate.getTime()
+        ))
+
+        let stateUrl: string = `${JD_BASE}/machines/${platformId}/deviceStateReports?startDate=${encodeURIComponent(chunkStart.toISOString())}&endDate=${encodeURIComponent(chunkEnd.toISOString())}&itemLimit=100`
+
+        while (stateUrl) {
+          const stateRes = await fetch(stateUrl, { headers })
+          if (!stateRes.ok) { stateUrl = ''; break }
+          const stateData = await stateRes.json()
+          const batch = (stateData.values || [])
+            .filter((r: any) => r.time != null)
+            .map((r: any) => ({ time: r.time, engineState: r.engineState ?? 1 }))
+          stateReports = stateReports.concat(batch)
+          const nextLink = stateData.links?.find((l: any) => l.rel === 'nextPage')
+          stateUrl = nextLink?.uri || ''
+          await new Promise(r => setTimeout(r, 100))
+        }
+
+        chunkStart = chunkEnd
+        await new Promise(r => setTimeout(r, 150))
       }
 
       // Update machine last seen
@@ -374,12 +362,10 @@ export async function GET(request: Request) {
         last_seen_at: lastLoc.ts, last_lat: lastLoc.lat, last_lon: lastLoc.lon
       }).eq('id', machineId)
 
-      // Get engine-off split points for this time window
+      // Get engine-off split points across the full window
       const splitPoints = getEngineOffSplits(stateReports, since, until)
 
-      // Build field sessions, splitting on:
-      // 1. Field boundary transitions (machine leaves/enters field)
-      // 2. Engine-off periods > 60 minutes
+      // Build field sessions, splitting on field boundary transitions and engine-off periods
       let currentFieldId: string | null = null
       let sessionStart: string | null = null
       let lastTs: string | null = null
@@ -388,13 +374,11 @@ export async function GET(request: Request) {
       for (const loc of locations) {
         const fieldId = findFieldForPoint(loc.lat, loc.lon, fields)
 
-        // Check if this location crosses an engine-off split point
-        if (sessionStart && lastTs && splitPoints.length > 0) {
+        // Check if we cross an engine-off split point between last ping and this ping
+        if (sessionStart && lastTs && currentFieldId && splitPoints.length > 0) {
           for (const split of splitPoints) {
-            if (split > lastTs && split <= loc.ts && currentFieldId) {
-              // Save session up to split point
+            if (split > lastTs && split <= loc.ts) {
               await saveSession(machineId, currentFieldId, sessionStart, split, machineType, totalSessions)
-              // Start new session after split (same field)
               sessionStart = loc.ts
               break
             }
@@ -402,7 +386,6 @@ export async function GET(request: Request) {
         }
 
         if (fieldId !== currentFieldId) {
-          // Save completed session on field boundary exit
           if (currentFieldId && sessionStart && lastTs) {
             await saveSession(machineId, currentFieldId, sessionStart, lastTs, machineType, totalSessions)
           }
