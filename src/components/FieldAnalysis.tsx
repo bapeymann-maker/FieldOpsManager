@@ -510,33 +510,57 @@ export default function FieldAnalysis({
     </thead>
     <tbody>
       {(() => {
-        const opGroups: Record<string, { minutes: number; sessions: number }> = {}
-        for (const s of workingSessions) {
-          if (!TRACTOR_TYPES.has(s.machines?.type || '')) continue
-          const op = s.operation_type || 'Unknown'
-          if (!opGroups[op]) opGroups[op] = { minutes: 0, sessions: 0 }
-          opGroups[op].minutes += s.duration_minutes
-          opGroups[op].sessions++
-        }
-        return Object.entries(opGroups)
-          .sort((a, b) => b[1].minutes - a[1].minutes)
-          .map(([op, data], i) => {
-            const hrs = data.minutes / 60
-            const acHr = field.acres && hrs > 0 ? Math.round((field.acres / hrs) * 10) / 10 : null
-            const minPerAcre = acHr ? Math.round(60 / acHr) : null
-            return (
-              <tr key={op}>
-                <td style={tdStyle(i)}>
-                  <span style={{ fontSize: '11px', color: getOpColor(op), backgroundColor: getOpColor(op) + '18', padding: '2px 7px', borderRadius: '3px', border: `1px solid ${getOpColor(op)}44` }}>{op}</span>
-                </td>
-                <td style={tdStyle(i)}>{data.sessions}</td>
-                <td style={tdStyle(i)}><span style={{ color: '#a8c888' }}>{hrs.toFixed(1)}</span></td>
-                <td style={tdStyle(i)}>{acHr ? <span style={{ color: '#aad4ff', fontWeight: 'bold' }}>{acHr}</span> : '—'}</td>
-                <td style={tdStyle(i)}>{minPerAcre ? <span style={{ color: '#8a9a6a' }}>{minPerAcre}</span> : '—'}</td>
-              </tr>
-            )
-          })
-      })()}
+  const opGroups: Record<string, { tractorMinutes: number; planterMinutes: number; sessions: number }> = {}
+  for (const s of workingSessions) {
+    const op = s.operation_type || 'Unknown'
+    if (!opGroups[op]) opGroups[op] = { tractorMinutes: 0, planterMinutes: 0, sessions: 0 }
+    if (TRACTOR_TYPES.has(s.machines?.type || '')) {
+      opGroups[op].tractorMinutes += s.duration_minutes
+      opGroups[op].sessions++
+    }
+    if (s.machines?.type === 'Planter') {
+      opGroups[op].planterMinutes += s.duration_minutes
+    }
+  }
+  return Object.entries(opGroups)
+    .sort((a, b) => b[1].tractorMinutes - a[1].tractorMinutes)
+    .map(([op, data], i) => {
+      const isSeeding = op === 'Seeding'
+      const tractorHrs = data.tractorMinutes / 60
+      const planterHrs = data.planterMinutes / 60
+      const hasDiscrepancy = isSeeding && data.planterMinutes > 0 && data.planterMinutes > data.tractorMinutes * 1.1
+      // Use planter time for seeding ac/hr if available, else tractor
+      const effMins = isSeeding && data.planterMinutes > 0 ? data.planterMinutes : data.tractorMinutes
+      const acHr = field.acres && effMins > 0 ? Math.round((field.acres / (effMins / 60)) * 10) / 10 : null
+      const minPerAcre = acHr ? Math.round(60 / acHr) : null
+      return (
+        <tr key={op}>
+          <td style={tdStyle(i)}>
+            <span style={{ fontSize: '11px', color: getOpColor(op), backgroundColor: getOpColor(op) + '18', padding: '2px 7px', borderRadius: '3px', border: `1px solid ${getOpColor(op)}44` }}>{op}</span>
+          </td>
+          <td style={tdStyle(i)}>{data.sessions}</td>
+          <td style={tdStyle(i)}>
+            <span style={{ color: '#a8c888' }}>{tractorHrs.toFixed(1)}</span>
+            {hasDiscrepancy && <span style={{ color: '#cc8800', marginLeft: '3px' }} title="Tractor time less than planter time — GPS gap likely">*</span>}
+            {isSeeding && data.planterMinutes > 0 && (
+              <span style={{ fontSize: '10px', color: '#6b7a5a', marginLeft: '6px' }}>
+                (planter: {planterHrs.toFixed(1)}h)
+              </span>
+            )}
+          </td>
+          <td style={tdStyle(i)}>
+            {acHr
+              ? <span style={{ color: '#aad4ff', fontWeight: 'bold' }}>
+                  {acHr}
+                  {hasDiscrepancy && <span style={{ color: '#cc8800', marginLeft: '2px' }} title="Based on planter time due to tractor GPS gap">*</span>}
+                </span>
+              : '—'}
+          </td>
+          <td style={tdStyle(i)}>{minPerAcre ?? '—'}</td>
+        </tr>
+      )
+    })
+})()}
     </tbody>
   </table>
 </div>
