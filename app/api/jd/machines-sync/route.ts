@@ -28,6 +28,10 @@ const MACHINE_ROLES: Record<string, string> = {
   '4844531': 'seeding',  // 8RT 370 #3 Ufer
 }
 
+// Engine off for longer than this = end current session (parking, breakdown, overnight)
+// Turns, refills, headlands (<60 min) are kept as part of the session
+const ENGINE_OFF_SPLIT_MINUTES = 60
+
 async function getAccessToken() {
   const { data } = await supabase.from('jd_tokens').select('*').eq('id', 1).single()
   if (!data) throw new Error('No token found')
@@ -87,6 +91,67 @@ function findFieldForPoint(lat: number, lon: number, fields: { id: string; bound
   return null
 }
 
+// Find the engine state at a given timestamp by finding nearest device state report
+function getEngineStateAtTime(
+  ts: string,
+  stateReports: { time: string; engineState: number }[]
+): number {
+  if (stateReports.length === 0) return 1 // assume on if no data
+  const tsMs = new Date(ts).getTime()
+  let nearest = stateReports[0]
+  let nearestDiff = Math.abs(new Date(stateReports[0].time).getTime() - tsMs)
+  for (const r of stateReports) {
+    const diff = Math.abs(new Date(r.time).getTime() - tsMs)
+    if (diff < nearestDiff) { nearest = r; nearestDiff = diff }
+  }
+  // Only use state report if within 2 hours of the ping
+  if (nearestDiff > 2 * 60 * 60 * 1000) return 1
+  return nearest.engineState
+}
+
+// Find continuous engine-off periods > threshold and return split points
+function getEngineOffSplits(
+  stateReports: { time: string; engineState: number }[],
+  sinceTs: string,
+  untilTs: string
+): string[] {
+  if (stateReports.length === 0) return []
+  
+  const splits: string[] = []
+  const sinceMs = new Date(sinceTs).getTime()
+  const untilMs = new Date(untilTs).getTime()
+  
+  // Filter to window and sort ascending
+  const reports = stateReports
+    .filter(r => {
+      const t = new Date(r.time).getTime()
+      return t >= sinceMs && t <= untilMs
+    })
+    .sort((a, b) => new Date(a.time).getTime() - new Date(b.time).getTime())
+  
+  let engineOffStart: string | null = null
+  
+  for (const r of reports) {
+    if (r.engineState === 0) {
+      if (!engineOffStart) engineOffStart = r.time
+    } else {
+      if (engineOffStart) {
+        const offMs = new Date(r.time).getTime() - new Date(engineOffStart).getTime()
+        const offMinutes = offMs / 60000
+        if (offMinutes >= ENGINE_OFF_SPLIT_MINUTES) {
+          // This is a significant engine-off period — mark as split point
+          // Split at the midpoint between engine off and engine on
+          const splitMs = new Date(engineOffStart).getTime() + offMs / 2
+          splits.push(new Date(splitMs).toISOString())
+        }
+        engineOffStart = null
+      }
+    }
+  }
+  
+  return splits
+}
+
 const opTypeCache: Record<string, string | null> = {}
 
 async function getOperationTypeForFieldDate(
@@ -98,7 +163,6 @@ async function getOperationTypeForFieldDate(
   const cacheKey = `${fieldId}_${date}_${machineType || ''}_${machineId || ''}`
   if (cacheKey in opTypeCache) return opTypeCache[cacheKey]
 
-  // Fetch operations for this field/date
   const { data } = await supabase
     .from('operations')
     .select('operation_types(name)')
@@ -124,19 +188,19 @@ async function getOperationTypeForFieldDate(
 
   let opType: string | null = null
 
-  // Machine-specific role override — always use tillage for dedicated tillage machines
+  // Machine-specific role override
   if (machineId && MACHINE_ROLES[machineId]) {
-  const role = MACHINE_ROLES[machineId]
-  if (role === 'tillage') {
-    opType = ops.find(n => n.startsWith('Tillage')) ||
-             ops.find(n => n.startsWith('Application')) ||
-             ops[0] || null
-  } else if (role === 'seeding') {
-    opType = ops.find(n => n === 'Seeding') || ops[0] || null
+    const role = MACHINE_ROLES[machineId]
+    if (role === 'tillage') {
+      opType = ops.find(n => n.startsWith('Tillage')) ||
+               ops.find(n => n.startsWith('Application')) ||
+               ops[0] || null
+    } else if (role === 'seeding') {
+      opType = ops.find(n => n === 'Seeding') || ops[0] || null
+    }
+    opTypeCache[cacheKey] = opType
+    return opType
   }
-  opTypeCache[cacheKey] = opType
-  return opType
-}
 
   const isPlanter = machineType === 'Planter'
   const isCombine = machineType === 'Combine'
@@ -180,6 +244,34 @@ async function getOperationTypeForFieldDate(
   return opType
 }
 
+async function saveSession(
+  machineId: string,
+  fieldId: string,
+  sessionStart: string,
+  sessionEnd: string,
+  machineType: string,
+  totalSessions: { count: number }
+) {
+  const durationMs = new Date(sessionEnd).getTime() - new Date(sessionStart).getTime()
+  const durationMinutes = Math.round(durationMs / 60000)
+  if (durationMinutes < 2) return
+
+  const sessionDate = sessionStart.split('T')[0]
+  const opType = await getOperationTypeForFieldDate(fieldId, sessionDate, machineType, machineId)
+
+  const { error } = await supabase.from('machine_field_sessions').upsert({
+    machine_id: machineId,
+    field_id: fieldId,
+    entered_at: sessionStart,
+    exited_at: sessionEnd,
+    duration_minutes: durationMinutes,
+    operation_type: opType,
+    date: sessionDate
+  }, { onConflict: 'machine_id,field_id,entered_at' })
+
+  if (!error) totalSessions.count++
+}
+
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url)
@@ -211,18 +303,12 @@ export async function GET(request: Request) {
         if (machineFilter) return m.id === machineFilter
         return m.telematicsCapable && !m.archived && RELEVANT_TYPES.has(m.type?.name || '')
       })
-      .map((m: any) => ({
-        ...m,
-        platformId: m.principalId || m.id
-      }))
+      .map((m: any) => ({ ...m, platformId: m.principalId || m.id }))
 
     for (const m of relevantMachines) {
       await supabase.from('machines').upsert({
-        id: m.id,
-        name: m.name,
-        make: m.make?.name || null,
-        model: m.model?.name || null,
-        type: m.type?.name || null,
+        id: m.id, name: m.name, make: m.make?.name || null,
+        model: m.model?.name || null, type: m.type?.name || null,
         serial_number: m.serialNumber || null,
         telematics_capable: m.telematicsCapable || false,
         archived: m.archived || false,
@@ -232,33 +318,27 @@ export async function GET(request: Request) {
     const since = new Date(Date.now() - hoursBack * 60 * 60 * 1000).toISOString()
     const until = new Date().toISOString()
 
-    let totalSessions = 0
+    const totalSessions = { count: 0 }
     let processed = 0
-    const machineDetails: { id: string; name: string; platformId: string; pings: number; sessions: number }[] = []
+    const machineDetails: { id: string; name: string; platformId: string; pings: number; sessions: number; stateReports: number }[] = []
 
     for (const machine of relevantMachines) {
       const machineId = machine.id
       const platformId = machine.platformId
       const machineType = machine.type?.name || ''
 
+      // Fetch location history
       let allLocations: { lat: number; lon: number; ts: string }[] = []
       let locUrl: string = `${JD_BASE}/machines/${platformId}/locationHistory?startDate=${encodeURIComponent(since)}&endDate=${encodeURIComponent(until)}&itemLimit=100`
 
       while (locUrl) {
         const locRes = await fetch(locUrl, { headers })
         if (!locRes.ok) { locUrl = ''; break }
-
         const locData = await locRes.json()
         const batch = (locData.values || [])
           .filter((l: any) => l.point?.lat && l.point?.lon)
-          .map((l: any) => ({
-            lat: l.point.lat,
-            lon: l.point.lon,
-            ts: l.eventTimestamp || l.gpsFixTimestamp
-          }))
-
+          .map((l: any) => ({ lat: l.point.lat, lon: l.point.lon, ts: l.eventTimestamp || l.gpsFixTimestamp }))
         allLocations = allLocations.concat(batch)
-
         const nextLink = locData.links?.find((l: any) => l.rel === 'nextPage')
         locUrl = nextLink?.uri || ''
         await new Promise(r => setTimeout(r, 100))
@@ -267,70 +347,79 @@ export async function GET(request: Request) {
       const locations = allLocations.sort((a, b) => new Date(a.ts).getTime() - new Date(b.ts).getTime())
 
       if (locations.length === 0) {
-        machineDetails.push({ id: machineId, name: machine.name, platformId, pings: 0, sessions: 0 })
+        machineDetails.push({ id: machineId, name: machine.name, platformId, pings: 0, sessions: 0, stateReports: 0 })
         continue
       }
 
+      // Fetch device state reports for engine state correlation
+      let stateReports: { time: string; engineState: number }[] = []
+      let stateUrl: string = `${JD_BASE}/machines/${platformId}/deviceStateReports?startDate=${encodeURIComponent(since)}&endDate=${encodeURIComponent(until)}&itemLimit=100`
+
+      while (stateUrl) {
+        const stateRes = await fetch(stateUrl, { headers })
+        if (!stateRes.ok) { stateUrl = ''; break }
+        const stateData = await stateRes.json()
+        const batch = (stateData.values || [])
+          .filter((r: any) => r.time != null)
+          .map((r: any) => ({ time: r.time, engineState: r.engineState ?? 1 }))
+        stateReports = stateReports.concat(batch)
+        const nextLink = stateData.links?.find((l: any) => l.rel === 'nextPage')
+        stateUrl = nextLink?.uri || ''
+        await new Promise(r => setTimeout(r, 100))
+      }
+
+      // Update machine last seen
       const lastLoc = locations[locations.length - 1]
       await supabase.from('machines').update({
-        last_seen_at: lastLoc.ts,
-        last_lat: lastLoc.lat,
-        last_lon: lastLoc.lon
+        last_seen_at: lastLoc.ts, last_lat: lastLoc.lat, last_lon: lastLoc.lon
       }).eq('id', machineId)
 
+      // Get engine-off split points for this time window
+      const splitPoints = getEngineOffSplits(stateReports, since, until)
+
+      // Build field sessions, splitting on:
+      // 1. Field boundary transitions (machine leaves/enters field)
+      // 2. Engine-off periods > 60 minutes
       let currentFieldId: string | null = null
       let sessionStart: string | null = null
       let lastTs: string | null = null
-      let machineSessions = 0
+      const sessionsBefore = totalSessions.count
 
       for (const loc of locations) {
         const fieldId = findFieldForPoint(loc.lat, loc.lon, fields)
 
-        if (fieldId !== currentFieldId) {
-          if (currentFieldId && sessionStart && lastTs) {
-            const durationMs = new Date(lastTs).getTime() - new Date(sessionStart).getTime()
-            const durationMinutes = Math.round(durationMs / 60000)
-            if (durationMinutes >= 2) {
-              const sessionDate = sessionStart.split('T')[0]
-              const opType = await getOperationTypeForFieldDate(currentFieldId, sessionDate, machineType, machineId)
-              const { error } = await supabase.from('machine_field_sessions').upsert({
-                machine_id: machineId,
-                field_id: currentFieldId,
-                entered_at: sessionStart,
-                exited_at: lastTs,
-                duration_minutes: durationMinutes,
-                operation_type: opType,
-                date: sessionDate
-              }, { onConflict: 'machine_id,field_id,entered_at' })
-              if (!error) { totalSessions++; machineSessions++ }
+        // Check if this location crosses an engine-off split point
+        if (sessionStart && lastTs && splitPoints.length > 0) {
+          for (const split of splitPoints) {
+            if (split > lastTs && split <= loc.ts && currentFieldId) {
+              // Save session up to split point
+              await saveSession(machineId, currentFieldId, sessionStart, split, machineType, totalSessions)
+              // Start new session after split (same field)
+              sessionStart = loc.ts
+              break
             }
+          }
+        }
+
+        if (fieldId !== currentFieldId) {
+          // Save completed session on field boundary exit
+          if (currentFieldId && sessionStart && lastTs) {
+            await saveSession(machineId, currentFieldId, sessionStart, lastTs, machineType, totalSessions)
           }
           currentFieldId = fieldId
           sessionStart = fieldId ? loc.ts : null
         }
+
         lastTs = loc.ts
       }
 
+      // Save last open session
       if (currentFieldId && sessionStart && lastTs) {
-        const durationMs = new Date(lastTs).getTime() - new Date(sessionStart).getTime()
-        const durationMinutes = Math.round(durationMs / 60000)
-        if (durationMinutes >= 2) {
-          const sessionDate = sessionStart.split('T')[0]
-          const opType = await getOperationTypeForFieldDate(currentFieldId, sessionDate, machineType, machineId)
-          const { error } = await supabase.from('machine_field_sessions').upsert({
-            machine_id: machineId,
-            field_id: currentFieldId,
-            entered_at: sessionStart,
-            exited_at: lastTs,
-            duration_minutes: durationMinutes,
-            operation_type: opType,
-            date: sessionDate
-          }, { onConflict: 'machine_id,field_id,entered_at' })
-          if (!error) { totalSessions++; machineSessions++ }
-        }
+        await saveSession(machineId, currentFieldId, sessionStart, lastTs, machineType, totalSessions)
       }
 
-      machineDetails.push({ id: machineId, name: machine.name, platformId, pings: locations.length, sessions: machineSessions })
+      const sessionsCreated = totalSessions.count - sessionsBefore
+      machineDetails.push({ id: machineId, name: machine.name, platformId, pings: locations.length, sessions: sessionsCreated, stateReports: stateReports.length })
       processed++
       await new Promise(r => setTimeout(r, 200))
     }
@@ -339,7 +428,7 @@ export async function GET(request: Request) {
       success: true,
       machines_synced: relevantMachines.length,
       machines_processed: processed,
-      sessions_created: totalSessions,
+      sessions_created: totalSessions.count,
       hours_back: hoursBack,
       since,
       until,
