@@ -24,6 +24,8 @@ const RELEVANT_TYPES = new Set([
 const MACHINE_ROLES: Record<string, string> = {
   '5400560': 'tillage',  // 9RT 570 #20 UFER
   '6274249': 'tillage',  // 9620RX #21 UFER
+  '1151167': 'seeding',  // 8RT 370 #1 Ufer
+  '4844531': 'seeding',  // 8RT 370 #3 Ufer
 }
 
 async function getAccessToken() {
@@ -123,13 +125,18 @@ async function getOperationTypeForFieldDate(
   let opType: string | null = null
 
   // Machine-specific role override — always use tillage for dedicated tillage machines
-  if (machineId && MACHINE_ROLES[machineId] === 'tillage') {
+  if (machineId && MACHINE_ROLES[machineId]) {
+  const role = MACHINE_ROLES[machineId]
+  if (role === 'tillage') {
     opType = ops.find(n => n.startsWith('Tillage')) ||
              ops.find(n => n.startsWith('Application')) ||
              ops[0] || null
-    opTypeCache[cacheKey] = opType
-    return opType
+  } else if (role === 'seeding') {
+    opType = ops.find(n => n === 'Seeding') || ops[0] || null
   }
+  opTypeCache[cacheKey] = opType
+  return opType
+}
 
   const isPlanter = machineType === 'Planter'
   const isCombine = machineType === 'Combine'
