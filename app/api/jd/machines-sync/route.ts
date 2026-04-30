@@ -390,7 +390,7 @@ const activeSplits = splitPoints
   .filter(s => s > lastTs! && s <= loc.ts)
   .sort()
 for (const split of activeSplits) {
-  await saveSession(machineId, currentFieldId, sessionStart!, split, machineType, totalSessions)
+  await saveSession(machineId, currentFieldId!, sessionStart!, split, machineType, totalSessions)
   sessionStart = split
 }
 
