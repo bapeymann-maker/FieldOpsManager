@@ -115,9 +115,8 @@ function getEngineOffSplits(
         const offMs = new Date(r.time).getTime() - new Date(engineOffStart).getTime()
         const offMinutes = offMs / 60000
         if (offMinutes >= ENGINE_OFF_SPLIT_MINUTES) {
-          // Split at midpoint of the engine-off window
-          const splitMs = new Date(engineOffStart).getTime() + offMs / 2
-          splits.push(new Date(splitMs).toISOString())
+          // Use the engine-off start time as the split point, not the midpoint
+splits.push(engineOffStart)
         }
         engineOffStart = null
       }
