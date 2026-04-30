@@ -391,7 +391,7 @@ const activeSplits = splitPoints
   .sort()
 for (const split of activeSplits) {
   await saveSession(machineId, currentFieldId, sessionStart, split, machineType, totalSessions)
-  sessionStart = split
+  sessionStart! = split
 }
 
 // GPS gap fallback — catches overnight stops with no engine state data
