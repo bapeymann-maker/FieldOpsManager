@@ -385,6 +385,24 @@ for (const split of activeSplits) {
 }
         }
 
+        // Engine-off split check (existing)
+const activeSplits = splitPoints
+  .filter(s => s > lastTs! && s <= loc.ts)
+  .sort()
+for (const split of activeSplits) {
+  await saveSession(machineId, currentFieldId, sessionStart, split, machineType, totalSessions)
+  sessionStart = split
+}
+
+// GPS gap fallback — catches overnight stops with no engine state data
+if (sessionStart && lastTs && currentFieldId && activeSplits.length === 0) {
+  const gapMinutes = (new Date(loc.ts).getTime() - new Date(lastTs).getTime()) / 60000
+  if (gapMinutes >= ENGINE_OFF_SPLIT_MINUTES) {
+    await saveSession(machineId, currentFieldId, sessionStart, lastTs, machineType, totalSessions)
+    sessionStart = loc.ts
+  }
+}
+
         if (fieldId !== currentFieldId) {
           if (currentFieldId && sessionStart && lastTs) {
             await saveSession(machineId, currentFieldId, sessionStart, lastTs, machineType, totalSessions)
