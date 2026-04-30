@@ -115,8 +115,7 @@ function getEngineOffSplits(
         const offMs = new Date(r.time).getTime() - new Date(engineOffStart).getTime()
         const offMinutes = offMs / 60000
         if (offMinutes >= ENGINE_OFF_SPLIT_MINUTES) {
-          // Use the engine-off start time as the split point, not the midpoint
-splits.push(engineOffStart)
+          splits.push(engineOffStart)
         }
         engineOffStart = null
       }
@@ -225,6 +224,9 @@ async function saveSession(
   machineType: string,
   totalSessions: { count: number }
 ) {
+  // Guard against null/undefined values that would cause runtime errors
+  if (!sessionStart || !sessionEnd || !fieldId) return
+
   const durationMs = new Date(sessionEnd).getTime() - new Date(sessionStart).getTime()
   const durationMinutes = Math.round(durationMs / 60000)
   if (durationMinutes < 2) return
@@ -373,35 +375,27 @@ export async function GET(request: Request) {
       for (const loc of locations) {
         const fieldId = findFieldForPoint(loc.lat, loc.lon, fields)
 
-        // Check if we cross an engine-off split point between last ping and this ping
+        // Handle all engine-off split points that fall between last ping and this ping
         if (sessionStart && lastTs && currentFieldId && splitPoints.length > 0) {
           const activeSplits = splitPoints
-  .filter(s => s > lastTs! && s <= loc.ts)
-  .sort()
+            .filter(s => s > lastTs! && s <= loc.ts)
+            .sort()
 
-for (const split of activeSplits) {
-  await saveSession(machineId, currentFieldId, sessionStart, split, machineType, totalSessions)
-  sessionStart = split
-}
+          for (const split of activeSplits) {
+            await saveSession(machineId, currentFieldId, sessionStart, split, machineType, totalSessions)
+            sessionStart = split
+          }
         }
 
-        // Engine-off split check (existing)
-const activeSplits = splitPoints
-  .filter(s => s > lastTs! && s <= loc.ts)
-  .sort()
-for (const split of activeSplits) {
-  await saveSession(machineId, currentFieldId!, sessionStart!, split, machineType, totalSessions)
-  sessionStart = split
-}
-
-// GPS gap fallback — catches overnight stops with no engine state data
-if (sessionStart && lastTs && currentFieldId && activeSplits.length === 0) {
-  const gapMinutes = (new Date(loc.ts).getTime() - new Date(lastTs).getTime()) / 60000
-  if (gapMinutes >= ENGINE_OFF_SPLIT_MINUTES) {
-    await saveSession(machineId, currentFieldId, sessionStart, lastTs, machineType, totalSessions)
-    sessionStart = loc.ts
-  }
-}
+        // GPS gap fallback — catches overnight stops with no engine state transition recorded
+        if (sessionStart && lastTs && currentFieldId) {
+          const gapMinutes = (new Date(loc.ts).getTime() - new Date(lastTs).getTime()) / 60000
+          const alreadySplit = splitPoints.some(s => s > lastTs! && s <= loc.ts)
+          if (gapMinutes >= ENGINE_OFF_SPLIT_MINUTES && !alreadySplit) {
+            await saveSession(machineId, currentFieldId, sessionStart, lastTs, machineType, totalSessions)
+            sessionStart = loc.ts
+          }
+        }
 
         if (fieldId !== currentFieldId) {
           if (currentFieldId && sessionStart && lastTs) {
