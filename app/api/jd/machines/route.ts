@@ -22,24 +22,17 @@ export async function GET() {
       'Accept': 'application/vnd.deere.axiom.v3+json'
     }
 
-    const since = '2026-04-11T00:00:00Z'
-    const until = '2026-04-12T23:59:59Z'
     const res = await fetch(
-      `${JD_BASE}/machines/751937/deviceStateReports?startDate=${encodeURIComponent(since)}&endDate=${encodeURIComponent(until)}&itemLimit=100`,
+      `${JD_BASE}/machines/751937/deviceStateReports?startDate=${encodeURIComponent('2026-04-10T00:00:00Z')}&endDate=${encodeURIComponent('2026-04-13T00:00:00Z')}&itemLimit=100`,
       { headers }
     )
     const data = await res.json()
 
     return NextResponse.json({
-      status: res.status,
       total: data.total,
-      values: data.values?.map((v: any) => ({
-        time: v.time,
-        engineState: v.engineState,
-        vehiclePowerState: v.vehiclePowerState,
-        lat: v.location?.lat,
-        lon: v.location?.lon
-      }))
+      count: data.values?.length,
+      first: data.values?.[data.values.length - 1]?.time,
+      last: data.values?.[0]?.time
     })
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 })
