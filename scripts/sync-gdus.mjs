@@ -18,6 +18,9 @@ const CROP_CONFIGS = {
   SWEETCORN:  { base: 50, max: 86, name: 'sweet_corn' },
 }
 
+// Baseline config used for regional summaries (so oats/peas don't skew the headline number)
+const CORN_BASELINE = { base: 50, max: 86 }
+
 function calcGDU(maxF, minF, base, maxCap) {
   const hi = Math.min(maxF, maxCap)
   const lo = Math.max(minF, base)
@@ -117,7 +120,7 @@ async function main() {
   }
   console.log(`Computed centroids for ${Object.keys(fieldCentroids).length} fields`)
 
-  // Load field stations — still used to know which fields to process
+  // Load field stations — used to know which fields to process
   const { data: fieldStations } = await supabase
     .from('field_stations')
     .select('field_id, station_id, station_name')
@@ -172,7 +175,7 @@ async function main() {
   console.log('Loading existing GDU records...')
   const { data: existingRecords } = await supabase
     .from('gdu_daily')
-    .select('field_id, date, daily_gdu, rainfall_inches')
+    .select('field_id, date, daily_gdu, daily_gdu_corn, rainfall_inches')
     .order('date', { ascending: true })
 
   const fieldHistory = {}
@@ -207,12 +210,23 @@ async function main() {
       const obs = weatherCache[cKey]
       if (!obs) { totalNoWeather++; continue }
 
+      // Crop-specific GDU (used for weed tab and field detail)
       const dailyGDU = Math.round(calcGDU(obs.maxF, obs.minF, cropConfig.base, cropConfig.max) * 10) / 10
+
+      // Corn baseline GDU (used for regional summaries so oats/peas don't skew the number)
+      const dailyGDU_corn = Math.round(calcGDU(obs.maxF, obs.minF, CORN_BASELINE.base, CORN_BASELINE.max) * 10) / 10
+
       const rainfallInches = obs.rainfallInches || 0
 
       const history = fieldHistory[fs.field_id] || []
       const prior = history.filter(r => r.date >= seeding.date && r.date < dateStr)
+
+      // Cumulative crop-specific GDU
       const cumulativeGDU = Math.round((prior.reduce((s, r) => s + (r.daily_gdu || 0), 0) + dailyGDU) * 10) / 10
+
+      // Cumulative corn baseline GDU
+      const cumulativeGDU_corn = Math.round((prior.reduce((s, r) => s + (r.daily_gdu_corn ?? r.daily_gdu ?? 0), 0) + dailyGDU_corn) * 10) / 10
+
       const cumulativeRainfall = Math.round((prior.reduce((s, r) => s + (r.rainfall_inches || 0), 0) + rainfallInches) * 100) / 100
 
       const { error } = await supabase.from('gdu_daily').upsert({
@@ -222,8 +236,10 @@ async function main() {
         max_temp: Math.round(obs.maxF * 10) / 10,
         min_temp: Math.round(obs.minF * 10) / 10,
         daily_gdu: dailyGDU,
+        daily_gdu_corn: dailyGDU_corn,
         rainfall_inches: rainfallInches,
         cumulative_gdu: cumulativeGDU,
+        cumulative_gdu_corn: cumulativeGDU_corn,
         cumulative_rainfall: cumulativeRainfall,
         crop_type: cropConfig.name
       }, { onConflict: 'field_id,date' })
@@ -235,10 +251,11 @@ async function main() {
         const existing = fieldHistory[fs.field_id]?.find(r => r.date === dateStr)
         if (existing) {
           existing.daily_gdu = dailyGDU
+          existing.daily_gdu_corn = dailyGDU_corn
           existing.rainfall_inches = rainfallInches
         } else {
           if (!fieldHistory[fs.field_id]) fieldHistory[fs.field_id] = []
-          fieldHistory[fs.field_id].push({ date: dateStr, daily_gdu: dailyGDU, rainfall_inches: rainfallInches })
+          fieldHistory[fs.field_id].push({ date: dateStr, daily_gdu: dailyGDU, daily_gdu_corn: dailyGDU_corn, rainfall_inches: rainfallInches })
           fieldHistory[fs.field_id].sort((a, b) => a.date.localeCompare(b.date))
         }
         daySynced++

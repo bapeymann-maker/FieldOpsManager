@@ -29,7 +29,11 @@ type Operation = {
   operation_types: { name: string; color: string }
 }
 type GDURecord = {
-  field_id: string; date: string; daily_gdu: number; cumulative_gdu: number;
+  field_id: string; date: string;
+  daily_gdu: number;
+  daily_gdu_corn: number | null;       // corn baseline — used for regional summaries
+  cumulative_gdu: number;              // crop-specific — used for weed tab & field detail
+  cumulative_gdu_corn: number | null;  // corn baseline — used for regional summaries
   cumulative_rainfall: number; rainfall_inches: number; crop_type: string;
 }
 type SelectedOp = { op: Operation; fieldName: string }
@@ -318,6 +322,8 @@ export default function Home() {
     const fieldGDU = seedingDate ? gduData.filter(g => g.field_id === f.id && g.date >= seedingDate) : []
     const sortedGDU = [...fieldGDU].sort((a, b) => b.date.localeCompare(a.date))
     const latestGDU = sortedGDU[0]
+
+    // Crop-specific cumulative GDU — used for weed tab and field analysis
     const cumulativeGDU = latestGDU?.cumulative_gdu
     const cumulativeRainfall = latestGDU?.cumulative_rainfall
 
@@ -368,6 +374,12 @@ export default function Home() {
     fieldMetaMap[f.id] = { gduSinceLastTillage: f.gduSinceLastTillage, rainfallSinceLastTillage: f.rainfallSinceLastTillage, isInCrop: f.isInCrop }
   }
 
+  // Helper: corn-baseline daily GDU for a record (falls back to daily_gdu if corn column not yet populated)
+  function cornDailyGDU(r: GDURecord): number {
+    return r.daily_gdu_corn ?? r.daily_gdu
+  }
+
+  // Regional cumulative GDU rows in calendar header — uses corn baseline so oats don't skew the number
   function getCumulativeGDUForDay(day: number, region: 'North' | 'South') {
     const cellDate = new Date(year, month, day)
     const isCurrentMonth = year === currentYear && month === currentMonth
@@ -381,12 +393,13 @@ export default function Home() {
     const records = gduData.filter(g => g.date >= startOfYear && g.date <= dateStr && regionFieldIds.includes(g.field_id))
     if (records.length === 0) return null
     const fieldTotals: Record<string, number> = {}
-    for (const r of records) fieldTotals[r.field_id] = (fieldTotals[r.field_id] || 0) + r.daily_gdu
+    for (const r of records) fieldTotals[r.field_id] = (fieldTotals[r.field_id] || 0) + cornDailyGDU(r)
     const vals = Object.values(fieldTotals)
     if (vals.length === 0) return null
     return Math.round(vals.reduce((s, v) => s + v, 0) / vals.length * 10) / 10
   }
 
+  // Regional cumulative GDU rows in year view header — uses corn baseline
   function getCumulativeGDUForMonth(monthIndex: number, region: 'North' | 'South') {
     const startOfYear = `${year}-01-01`
     const endOfMonth = `${year}-${String(monthIndex + 1).padStart(2, '0')}-${String(getDaysInMonth(year, monthIndex)).padStart(2, '0')}`
@@ -397,12 +410,13 @@ export default function Home() {
     const records = gduData.filter(g => g.date >= startOfYear && g.date <= endOfMonth && regionFieldIds.includes(g.field_id))
     if (records.length === 0) return null
     const fieldTotals: Record<string, number> = {}
-    for (const r of records) fieldTotals[r.field_id] = (fieldTotals[r.field_id] || 0) + r.daily_gdu
+    for (const r of records) fieldTotals[r.field_id] = (fieldTotals[r.field_id] || 0) + cornDailyGDU(r)
     const vals = Object.values(fieldTotals)
     if (vals.length === 0) return null
     return Math.round(vals.reduce((s, v) => s + v, 0) / vals.length)
   }
 
+  // Daily GDU avg row per section — uses corn baseline for consistency with cumulative rows
   function getGDUForDay(day: number, region: 'North' | 'South') {
     const cellDate = new Date(year, month, day)
     const isCurrentMonth = year === currentYear && month === currentMonth
@@ -411,15 +425,16 @@ export default function Home() {
     const regionFieldIds = fields.filter(f => f.region === region && f.client !== 'LB Pork').map(f => f.id)
     const dayRecords = gduData.filter(g => g.date === dateStr && regionFieldIds.includes(g.field_id))
     if (dayRecords.length === 0) return null
-    return Math.round(dayRecords.reduce((sum, g) => sum + g.daily_gdu, 0) / dayRecords.length * 10) / 10
+    return Math.round(dayRecords.reduce((sum, g) => sum + cornDailyGDU(g), 0) / dayRecords.length * 10) / 10
   }
 
+  // Monthly GDU avg row per section — uses corn baseline
   function getGDUForMonth(monthIndex: number, region: 'North' | 'South') {
     const regionFieldIds = fields.filter(f => f.region === region && f.client !== 'LB Pork').map(f => f.id)
     const monthStr = `${year}-${String(monthIndex + 1).padStart(2, '0')}`
     const monthRecords = gduData.filter(g => g.date.startsWith(monthStr) && regionFieldIds.includes(g.field_id))
     if (monthRecords.length === 0) return null
-    return Math.round(monthRecords.reduce((sum, g) => sum + g.daily_gdu, 0) / regionFieldIds.length * 10) / 10
+    return Math.round(monthRecords.reduce((sum, g) => sum + cornDailyGDU(g), 0) / regionFieldIds.length * 10) / 10
   }
 
   function getForecastDate(currentGDU: number, targetGDU: number, fieldId: string): string {
@@ -517,6 +532,7 @@ export default function Home() {
     return { ...g, count: groupFields.length, totalAcres: groupFields.reduce((sum, f) => sum + (f.acres || 0), 0) }
   })
 
+  // Weed tab uses crop-specific cumulative_gdu so oats fields show correct oat GDU thresholds
   const weedingFields = fieldsWithHeat.filter(f =>
     f.isInCrop && f.cumulativeGDU !== undefined && f.client !== 'LB Pork' &&
     (f.region === 'North' || f.region === 'South') &&
@@ -787,7 +803,7 @@ export default function Home() {
         </div>
       )}
 
-      {/* Weeding Action Plan */}
+      {/* Weeding Action Plan — uses crop-specific cumulative_gdu so oats thresholds are correct */}
       {!loading && view === 'weed' && (
         <div style={{ padding: isMobile ? '12px 16px' : '24px 32px' }}>
           <div style={{ marginBottom: '20px', display: 'flex', alignItems: 'baseline', gap: '12px', flexWrap: 'wrap' }}>
