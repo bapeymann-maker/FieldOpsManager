@@ -445,6 +445,13 @@ export default function Home() {
     return Math.round(monthRecords.reduce((sum, g) => sum + cornDailyGDU(g), 0) / regionFieldIds.length * 10) / 10
   }
 
+  // Per-field cumulative GDU for a specific calendar day (shown in each cell)
+  function getFieldCumulativeGDUForDay(fieldId: string, day: number): number | null {
+    const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+    const record = gduData.find(g => g.field_id === fieldId && g.date === dateStr)
+    return record?.cumulative_gdu ?? null
+  }
+
   function getForecastDate(currentGDU: number, targetGDU: number, fieldId: string): string {
     try {
       const recent = gduData.filter(g => g.field_id === fieldId).sort((a, b) => b.date.localeCompare(a.date)).slice(0, 7)
@@ -1043,9 +1050,13 @@ export default function Home() {
                           const ops = getOperations(field.id, day)
                           const isToday = day === today && month === currentMonth && year === currentYear
                           const weekend = isWeekend(year, month, day)
+                          const fieldCumGDU = getFieldCumulativeGDUForDay(field.id, day)
                           return (
-                            <td key={day} style={{ padding: '3px 2px', textAlign: 'center', borderBottom: '1px solid #1a2016', borderLeft: isToday ? '2px solid #c8d4a04a' : undefined, backgroundColor: weekend ? '#0d1009' : undefined }}>
-                              <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', alignItems: 'center' }}>
+                            <td key={day} style={{ padding: '2px 2px', textAlign: 'center', borderBottom: '1px solid #1a2016', borderLeft: isToday ? '2px solid #c8d4a04a' : undefined, backgroundColor: weekend ? '#0d1009' : undefined, verticalAlign: 'middle' }}>
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '1px', alignItems: 'center' }}>
+                                {fieldCumGDU !== null && (
+                                  <div style={{ fontSize: '8px', color: '#7ab8e8', lineHeight: 1, fontVariantNumeric: 'tabular-nums' }}>{Math.round(fieldCumGDU)}</div>
+                                )}
                                 {ops.map(op => (
                                   <div key={op.id} onClick={e => { e.stopPropagation(); setHideStep(0); setSelectedOp({ op, fieldName: field.name }) }}
                                     title={op.operation_types?.name}
@@ -1059,12 +1070,6 @@ export default function Home() {
                         })}
                       </tr>
                     ))}
-                    {!collapsed && !isLBPork && (
-                      <tr style={{ backgroundColor: '#0a0f0b' }}>
-                        <td style={{ padding: '3px 12px', fontSize: '9px', color: '#4a6a4a', borderBottom: '1px solid #2a3020', position: 'sticky', left: 0, backgroundColor: '#0a0f0b', letterSpacing: '0.1em', textTransform: 'uppercase' }}>GDU avg</td>
-                        {days.map(day => { const gdu = getGDUForDay(day, region as 'North' | 'South'); return <td key={day} style={gduCellStyle(gdu !== null)}>{gdu !== null ? gdu : ''}</td> })}
-                      </tr>
-                    )}
                   </React.Fragment>
                 )
               })}
