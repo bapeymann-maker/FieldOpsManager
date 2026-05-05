@@ -153,6 +153,7 @@ const WEED_COLS = [
   { label: 'Field', width: '150px' },
   { label: 'Acres', width: '55px' },
   { label: 'Cert', width: '40px' },
+  { label: 'Seeded', width: '70px' },
   { label: 'GDU Since Plant', width: '85px' },
   { label: 'Stage', width: '75px' },
   { label: 'Last Tillage', width: '70px' },
@@ -349,12 +350,19 @@ export default function Home() {
       if (lastTillageOp && lastTillageOp.date > seedingDate) {
         const lastTillageDate = lastTillageOp.date
         lastTillageOpName = lastTillageOp.operation_types?.name
+        // Use cumulative_gdu subtraction so this stays consistent with cumulativeGDU
+        const tillageGDURec = [...fieldGDU]
+          .filter(g => g.date <= lastTillageDate)
+          .sort((a, b) => b.date.localeCompare(a.date))[0]
+        const gduAtTillage = tillageGDURec?.cumulative_gdu ?? 0
+        const latestCumulative = latestGDU?.cumulative_gdu ?? 0
+        gduSinceLastTillage = Math.round(Math.max(0, latestCumulative - gduAtTillage))
         const recsSince = fieldGDU.filter(g => g.date > lastTillageDate)
-        gduSinceLastTillage = Math.round(recsSince.reduce((s, g) => s + g.daily_gdu, 0))
         rainfallSinceLastTillage = Math.round(recsSince.reduce((s, g) => s + (g.rainfall_inches || 0), 0) * 100) / 100
       } else {
+        // No post-seeding tillage — GDU since tillage = GDU since planting
+        gduSinceLastTillage = Math.round(latestGDU?.cumulative_gdu ?? 0)
         const recsSince = fieldGDU.filter(g => g.date > seedingDate)
-        gduSinceLastTillage = Math.round(recsSince.reduce((s, g) => s + g.daily_gdu, 0))
         rainfallSinceLastTillage = Math.round(recsSince.reduce((s, g) => s + (g.rainfall_inches || 0), 0) * 100) / 100
       }
     }
@@ -532,11 +540,12 @@ export default function Home() {
     return { ...g, count: groupFields.length, totalAcres: groupFields.reduce((sum, f) => sum + (f.acres || 0), 0) }
   })
 
-  // Weed tab uses crop-specific cumulative_gdu so oats fields show correct oat GDU thresholds
+  // Weed tab: crop-specific cumulative_gdu, oats excluded (no weed control after planting)
   const weedingFields = fieldsWithHeat.filter(f =>
     f.isInCrop && f.cumulativeGDU !== undefined && f.client !== 'LB Pork' &&
     (f.region === 'North' || f.region === 'South') &&
-    (f.cert_status || 'Conventional') !== 'Conventional'
+    (f.cert_status || 'Conventional') !== 'Conventional' &&
+    f.cropType !== 'Oats'
   )
 
   const p = isMobile ? '12px 16px' : '16px 32px'
@@ -874,6 +883,7 @@ export default function Home() {
                                   <td style={{ padding: '7px 10px', fontSize: '12px', color: '#a8b888', borderBottom: '1px solid #1a2016', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}><span onClick={() => goToFieldOnMap(f.id)} style={{ cursor: 'pointer', borderBottom: '1px dotted #4a5a3a' }}>{f.name}</span></td>
                                   <td style={{ padding: '7px 10px', fontSize: '11px', color: '#6b7a5a', borderBottom: '1px solid #1a2016', overflow: 'hidden' }}>{f.acres}</td>
                                   <td style={{ padding: '7px 10px', fontSize: '11px', color: '#6b7a5a', borderBottom: '1px solid #1a2016', overflow: 'hidden' }}>{certBadge(f.cert_status)}</td>
+                                  <td style={{ padding: '7px 10px', fontSize: '11px', color: '#8a9a6a', borderBottom: '1px solid #1a2016', overflow: 'hidden' }}>{f.seedingDate ? new Date(f.seedingDate + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '—'}</td>
                                   <td style={{ padding: '7px 10px', fontSize: '12px', color: '#c8d4a0', borderBottom: '1px solid #1a2016', overflow: 'hidden' }}>{Math.round(gdu)}</td>
                                   <td style={{ padding: '7px 10px', fontSize: '12px', color: '#8a9a6a', borderBottom: '1px solid #1a2016', overflow: 'hidden' }}>{stage}</td>
                                   <td style={{ padding: '7px 10px', fontSize: '11px', color: '#6b7a5a', borderBottom: '1px solid #1a2016', overflow: 'hidden' }}>{f.lastTillageOpName ? (OP_ABBREV[f.lastTillageOpName] || f.lastTillageOpName) : '—'}</td>
