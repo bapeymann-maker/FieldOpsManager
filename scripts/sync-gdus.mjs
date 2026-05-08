@@ -173,9 +173,13 @@ async function main() {
 
   // Load existing GDU records for cumulative calculations
   console.log('Loading existing GDU records...')
+  // Only load current year's records — cumulative always resets at each new seeding date
+  // so we never need prior-year daily values to calculate this year's running totals
+  const currentYear = dates[0].split('-')[0]
   const { data: existingRecords } = await supabase
     .from('gdu_daily')
     .select('field_id, date, daily_gdu, daily_gdu_corn, rainfall_inches')
+    .gte('date', `${currentYear}-01-01`)
     .order('date', { ascending: true })
     .limit(100000)
 
