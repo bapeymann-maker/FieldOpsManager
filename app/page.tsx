@@ -394,10 +394,12 @@ export default function Home() {
     if (isCurrentMonth && cellDate > new Date()) return null
     const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`
     const startOfYear = `${year}-01-01`
-    const regionFieldIds = fields.filter(f =>
-      f.region === region && f.client !== 'LB Pork' &&
-      fieldsWithHeat.find(fh => fh.id === f.id && fh.isInCrop)
-    ).map(f => f.id)
+    // Only include fields seeded BEFORE this date so newly seeded fields don't drag the average down
+    const regionFieldIds = fields.filter(f => {
+      if (f.region !== region || f.client === 'LB Pork') return false
+      const fh = fieldsWithHeat.find(fh => fh.id === f.id)
+      return fh?.isInCrop && fh.seedingDate && fh.seedingDate < dateStr
+    }).map(f => f.id)
     const records = gduData.filter(g => g.date >= startOfYear && g.date <= dateStr && regionFieldIds.includes(g.field_id))
     if (records.length === 0) return null
     const fieldTotals: Record<string, number> = {}
@@ -411,10 +413,12 @@ export default function Home() {
   function getCumulativeGDUForMonth(monthIndex: number, region: 'North' | 'South') {
     const startOfYear = `${year}-01-01`
     const endOfMonth = `${year}-${String(monthIndex + 1).padStart(2, '0')}-${String(getDaysInMonth(year, monthIndex)).padStart(2, '0')}`
-    const regionFieldIds = fields.filter(f =>
-      f.region === region && f.client !== 'LB Pork' &&
-      fieldsWithHeat.find(fh => fh.id === f.id && fh.isInCrop)
-    ).map(f => f.id)
+    // Only include fields seeded before the end of this month
+    const regionFieldIds = fields.filter(f => {
+      if (f.region !== region || f.client === 'LB Pork') return false
+      const fh = fieldsWithHeat.find(fh => fh.id === f.id)
+      return fh?.isInCrop && fh.seedingDate && fh.seedingDate < endOfMonth
+    }).map(f => f.id)
     const records = gduData.filter(g => g.date >= startOfYear && g.date <= endOfMonth && regionFieldIds.includes(g.field_id))
     if (records.length === 0) return null
     const fieldTotals: Record<string, number> = {}
