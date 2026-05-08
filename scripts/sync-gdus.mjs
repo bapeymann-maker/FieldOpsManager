@@ -177,6 +177,7 @@ async function main() {
     .from('gdu_daily')
     .select('field_id, date, daily_gdu, daily_gdu_corn, rainfall_inches')
     .order('date', { ascending: true })
+    .limit(100000)
 
   const fieldHistory = {}
   for (const r of existingRecords || []) {
