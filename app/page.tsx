@@ -345,22 +345,22 @@ export default function Home() {
     let gduSinceLastTillage: number | undefined
     let rainfallSinceLastTillage: number | undefined
     let lastTillageOpName: string | undefined
+    let lastTillageDate: string | undefined
 
     if (isInCrop && seedingDate) {
       if (lastTillageOp && lastTillageOp.date > seedingDate) {
-        const lastTillageDate = lastTillageOp.date
+        const lastTillageDateVal = lastTillageOp.date
+        lastTillageDate = lastTillageDateVal
         lastTillageOpName = lastTillageOp.operation_types?.name
-        // Use cumulative_gdu subtraction so this stays consistent with cumulativeGDU
         const tillageGDURec = [...fieldGDU]
-          .filter(g => g.date <= lastTillageDate)
+          .filter(g => g.date <= lastTillageDateVal)
           .sort((a, b) => b.date.localeCompare(a.date))[0]
         const gduAtTillage = tillageGDURec?.cumulative_gdu ?? 0
         const latestCumulative = latestGDU?.cumulative_gdu ?? 0
         gduSinceLastTillage = Math.round(Math.max(0, latestCumulative - gduAtTillage))
-        const recsSince = fieldGDU.filter(g => g.date > lastTillageDate)
+        const recsSince = fieldGDU.filter(g => g.date > lastTillageDateVal)
         rainfallSinceLastTillage = Math.round(recsSince.reduce((s, g) => s + (g.rainfall_inches || 0), 0) * 100) / 100
       } else {
-        // No post-seeding tillage — GDU since tillage = GDU since planting
         gduSinceLastTillage = Math.round(latestGDU?.cumulative_gdu ?? 0)
         const recsSince = fieldGDU.filter(g => g.date > seedingDate)
         rainfallSinceLastTillage = Math.round(recsSince.reduce((s, g) => s + (g.rainfall_inches || 0), 0) * 100) / 100
@@ -370,7 +370,7 @@ export default function Home() {
     return {
       ...f, daysSinceWork, isInCrop, lastOpType, cumulativeGDU, cumulativeRainfall,
       gduSinceLastWork, rainfallSinceLastWork,
-      gduSinceLastTillage, rainfallSinceLastTillage, lastTillageOpName,
+      gduSinceLastTillage, rainfallSinceLastTillage, lastTillageOpName, lastTillageDate,
       cropType, seedingDate
     }
   })
@@ -855,23 +855,36 @@ export default function Home() {
                     <div key={cropType} style={{ marginBottom: '24px' }}>
                       <div style={{ fontSize: '11px', color: '#cc8800', letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: '8px' }}>{cropType} ({cropFields.length} fields)</div>
                       {isMobile ? (
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '1px' }}>
+                          {/* Mobile header row */}
+                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 70px 60px 70px 60px', gap: '4px', padding: '6px 12px', fontSize: '9px', letterSpacing: '0.1em', textTransform: 'uppercase', color: '#4a5a3a', borderBottom: '1px solid #2a3020' }}>
+                            <span>Field</span>
+                            <span style={{ textAlign: 'center' }}>Planted</span>
+                            <span style={{ textAlign: 'center' }}>GDU</span>
+                            <span style={{ textAlign: 'center' }}>Tillage</span>
+                            <span style={{ textAlign: 'center' }}>GDU↑</span>
+                          </div>
                           {sorted.map((f, i) => {
                             const gdu = f.cumulativeGDU || 0
-                            const nextAction = getNextAction(gdu)
-                            const forecast = nextAction ? getForecastDate(gdu, nextAction.gdu, f.id) : null
-                            const priority = f.gduSinceLastTillage ?? f.cumulativeGDU ?? 0
+                            const hasTillage = f.gduSinceLastTillage !== undefined && f.lastTillageDate !== undefined
+                            const priorityColor = i === 0 ? '#ff6b6b' : i < 3 ? '#ffaa44' : '#8a9a6a'
                             return (
-                              <div key={f.id} style={{ backgroundColor: '#111612', border: '1px solid #2a3020', borderRadius: '6px', padding: '12px 14px', borderLeft: `3px solid ${i === 0 ? '#ff6b6b' : i < 3 ? '#ffaa44' : '#4a5a3a'}` }}>
-                                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
-                                  <span style={{ fontSize: '14px', color: '#c8d4a0' }}>{f.name}</span>
-                                  <span style={{ fontSize: '11px', color: '#cc8800', fontWeight: 'bold' }}>{priority} GDU↑</span>
+                              <div key={f.id} style={{ display: 'grid', gridTemplateColumns: '1fr 70px 60px 70px 60px', gap: '4px', padding: '8px 12px', backgroundColor: i % 2 === 0 ? '#111612' : '#0f1410', borderBottom: '1px solid #1a2016', alignItems: 'center' }}>
+                                <div>
+                                  <span style={{ fontSize: '13px', color: '#c8d4a0' }}>{f.name}</span>
+                                  <span style={{ fontSize: '10px', color: '#6b7a5a', marginLeft: '6px' }}>{certBadge(f.cert_status)}</span>
                                 </div>
-                                <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', fontSize: '12px', color: '#8a9a6a' }}>
-                                  <span>{Math.round(gdu)} GDU total</span>
-                                  <span style={{ color: '#c8d4a0' }}>{getGrowthStage(gdu)}</span>
-                                  {nextAction && <span>→ {nextAction.action}</span>}
-                                  {forecast && <span style={{ color: '#aad4ff' }}>~{forecast}</span>}
+                                <div style={{ textAlign: 'center', fontSize: '12px', color: '#8a9a6a' }}>
+                                  {f.seedingDate ? new Date(f.seedingDate + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '—'}
+                                </div>
+                                <div style={{ textAlign: 'center', fontSize: '13px', color: '#c8d4a0', fontWeight: 'bold' }}>
+                                  {Math.round(gdu)}
+                                </div>
+                                <div style={{ textAlign: 'center', fontSize: '12px', color: '#8a9a6a' }}>
+                                  {hasTillage ? new Date(f.lastTillageDate! + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '—'}
+                                </div>
+                                <div style={{ textAlign: 'center', fontSize: '13px', color: hasTillage ? priorityColor : '#6b7a5a', fontWeight: hasTillage ? 'bold' : 'normal' }}>
+                                  {hasTillage ? f.gduSinceLastTillage : '—'}
                                 </div>
                               </div>
                             )
