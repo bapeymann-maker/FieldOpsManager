@@ -49,78 +49,34 @@ export async function GET(request: Request) {
       'Accept': 'application/vnd.deere.axiom.v3+json'
     }
 
-    // Mode 1: What links does the machine resource expose?
     if (mode === 'machine-links') {
       const res = await fetch(`${JD_BASE}/machines/${MACHINE_ID}`, { headers })
       const data = await res.json()
-      return NextResponse.json({
-        mode,
-        status: res.status,
-        links: data.links?.map((l: any) => ({ rel: l.rel, uri: l.uri })),
-        fields: Object.keys(data).filter(k => k !== 'links')
-      })
+      return NextResponse.json({ mode, status: res.status, links: data.links?.map((l: any) => ({ rel: l.rel, uri: l.uri })), fields: Object.keys(data).filter(k => k !== 'links') })
     }
-
-    // Mode 2: What links does the org resource expose?
     if (mode === 'org-links') {
       const res = await fetch(`${JD_BASE}/organizations/${ORG_ID}`, { headers })
       const data = await res.json()
-      return NextResponse.json({
-        mode,
-        status: res.status,
-        links: data.links?.map((l: any) => ({ rel: l.rel, uri: l.uri })),
-        fields: Object.keys(data).filter(k => k !== 'links')
-      })
+      return NextResponse.json({ mode, status: res.status, links: data.links?.map((l: any) => ({ rel: l.rel, uri: l.uri })), fields: Object.keys(data).filter(k => k !== 'links') })
     }
-
-    // Mode 3: Try org-level field operations endpoint
     if (mode === 'org-operations') {
-      const res = await fetch(
-        `${JD_BASE}/organizations/${ORG_ID}/operations?startDate=${encodeURIComponent('2026-05-07T00:00:00Z')}&endDate=${encodeURIComponent('2026-05-08T00:00:00Z')}`,
-        { headers }
-      )
-      const data = await res.json()
-      return NextResponse.json({ mode, status: res.status, data })
+      const res = await fetch(`${JD_BASE}/organizations/${ORG_ID}/operations?startDate=${encodeURIComponent('2026-05-07T00:00:00Z')}&endDate=${encodeURIComponent('2026-05-08T00:00:00Z')}`, { headers })
+      return NextResponse.json({ mode, status: res.status, data: await res.json() })
     }
-
-    // Mode 4: Try machine-level operations endpoint
     if (mode === 'machine-operations') {
-      const res = await fetch(
-        `${JD_BASE}/machines/${MACHINE_ID}/operations?startDate=${encodeURIComponent('2026-05-07T00:00:00Z')}&endDate=${encodeURIComponent('2026-05-08T00:00:00Z')}`,
-        { headers }
-      )
-      const data = await res.json()
-      return NextResponse.json({ mode, status: res.status, data })
+      const res = await fetch(`${JD_BASE}/machines/${MACHINE_ID}/operations?startDate=${encodeURIComponent('2026-05-07T00:00:00Z')}&endDate=${encodeURIComponent('2026-05-08T00:00:00Z')}`, { headers })
+      return NextResponse.json({ mode, status: res.status, data: await res.json() })
     }
-
-    // Mode 5: Try org-level fieldOperations endpoint
     if (mode === 'field-operations') {
-      const res = await fetch(
-        `${JD_BASE}/organizations/${ORG_ID}/fieldOperations?startDate=${encodeURIComponent('2026-05-07T00:00:00Z')}&endDate=${encodeURIComponent('2026-05-08T00:00:00Z')}`,
-        { headers }
-      )
-      const data = await res.json()
-      return NextResponse.json({ mode, status: res.status, data })
+      const res = await fetch(`${JD_BASE}/organizations/${ORG_ID}/fieldOperations?startDate=${encodeURIComponent('2026-05-07T00:00:00Z')}&endDate=${encodeURIComponent('2026-05-08T00:00:00Z')}`, { headers })
+      return NextResponse.json({ mode, status: res.status, data: await res.json() })
     }
-
-    // Mode 6: Try machine location history with different params
     if (mode === 'location-history') {
-      const res = await fetch(
-        `${JD_BASE}/machines/${MACHINE_ID}/locationHistory?startDate=${encodeURIComponent('2026-05-07T00:00:00Z')}&endDate=${encodeURIComponent('2026-05-08T00:00:00Z')}&itemLimit=10`,
-        { headers }
-      )
+      const res = await fetch(`${JD_BASE}/machines/${MACHINE_ID}/locationHistory?startDate=${encodeURIComponent('2026-05-07T00:00:00Z')}&endDate=${encodeURIComponent('2026-05-08T00:00:00Z')}&itemLimit=10`, { headers })
       const data = await res.json()
-      return NextResponse.json({
-        mode, status: res.status,
-        total: data.total,
-        count: data.values?.length,
-        sample: data.values?.slice(0, 3),
-        links: data.links?.map((l: any) => ({ rel: l.rel, uri: l.uri }))
-      })
+      return NextResponse.json({ mode, status: res.status, total: data.total, count: data.values?.length, sample: data.values?.slice(0, 3), links: data.links?.map((l: any) => ({ rel: l.rel, uri: l.uri })) })
     }
-
-    return NextResponse.json({ error: 'Unknown mode. Use: machine-links, org-links, org-operations, machine-operations, field-operations, location-history' })
-
+    return NextResponse.json({ error: 'Unknown mode' })
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 })
   }
