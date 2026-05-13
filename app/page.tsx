@@ -181,6 +181,9 @@ export default function Home() {
   const [editOp, setEditOp] = useState<Operation | null>(null)
   const [selectedOp, setSelectedOp] = useState<SelectedOp | null>(null)
   const [hideStep, setHideStep] = useState(0)
+  const [splitStep, setSplitStep] = useState(0)
+  const [splitDate, setSplitDate] = useState('')
+  const [splitting, setSplitting] = useState(false)
   const [hiding, setHiding] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [isMobile, setIsMobile] = useState(false)
@@ -202,7 +205,7 @@ export default function Home() {
   const days = Array.from({ length: daysInMonth }, (_, i) => i + 1)
   const monthName = new Date(year, month).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
 
-  function closePopup() { setSelectedOp(null); setHideStep(0) }
+  function closePopup() { setSelectedOp(null); setHideStep(0); setSplitStep(0); setSplitDate('') }
   function toggleSection(label: string) { setCollapsedSections(prev => ({ ...prev, [label]: !prev[label] })) }
   function toggleHideConv(label: string) { setHideConv(prev => ({ ...prev, [label]: !prev[label] })) }
   function goToFieldOnMap(fieldId: string) { setFocusFieldId(fieldId); setView('map') }
@@ -469,7 +472,27 @@ export default function Home() {
     } catch (e) { return 'Unknown' }
   }
 
-  async function handleSignOut() { await supabase.auth.signOut(); router.push('/login'); router.refresh() }
+  async function handleSplit() {
+    if (!selectedOp || !splitDate) return
+    setSplitting(true)
+    const { error } = await supabase.from('operations').insert({
+      field_id: selectedOp.op.field_id,
+      operation_type_id: selectedOp.op.operation_type_id,
+      date: splitDate,
+      notes: selectedOp.op.notes || '',
+      source: 'manual',
+      crop_type: selectedOp.op.crop_type || null,
+      hidden: false,
+    })
+    setSplitting(false)
+    if (error) {
+      console.error('Split insert error:', error)
+      alert(`Failed to create entry: ${error.message}`)
+      return
+    }
+    closePopup()
+    if (view === 'year') loadYearData(); else if (view === 'log') loadLogData(); else loadData()
+  } await supabase.auth.signOut(); router.push('/login'); router.refresh() }
 
   async function handleDelete() {
     if (!selectedOp) return
@@ -567,6 +590,26 @@ export default function Home() {
     const opDate = new Date(op.date + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
     const opName = op.operation_types?.name || 'Operation'
     const isJD = op.source === 'john_deere'
+
+    if (splitStep === 1) return (
+      <>
+        <div style={{ fontSize: '13px', color: '#aac8ff', marginBottom: '6px', fontWeight: 'bold' }}>Split Operation</div>
+        <div style={{ fontSize: '12px', color: '#c8d4a0', marginBottom: '2px' }}>{selectedOp.fieldName}</div>
+        <div style={{ fontSize: '12px', color: '#8a9a6a', marginBottom: '16px' }}>{opName} — {opDate}</div>
+        <div style={{ fontSize: '11px', color: '#6b7a5a', marginBottom: '8px', letterSpacing: '0.1em', textTransform: 'uppercase' }}>Date for new entry</div>
+        <input
+          type="date"
+          value={splitDate}
+          onChange={e => setSplitDate(e.target.value)}
+          style={{ width: '100%', padding: '10px 12px', backgroundColor: '#0f1410', border: '1px solid #2a3020', color: '#e8ead5', borderRadius: '4px', fontSize: '15px', boxSizing: 'border-box', marginBottom: '16px' }}
+        />
+        <div style={{ fontSize: '11px', color: '#4a5a3a', marginBottom: '16px' }}>The original {opDate} entry stays. A new entry will be created on the date above with the same field and operation type.</div>
+        <div style={{ display: 'flex', gap: '8px' }}>
+          <button onClick={handleSplit} disabled={splitting || !splitDate} style={{ padding: isMobile ? '10px 16px' : '7px 14px', backgroundColor: splitDate ? '#1a3a5a' : '#1a2a3a', border: 'none', color: splitDate ? '#aac8ff' : '#4a6a8a', borderRadius: '4px', cursor: splitDate ? 'pointer' : 'default', fontSize: isMobile ? '14px' : '13px', flex: 1, fontWeight: 'bold' }}>{splitting ? 'Creating...' : 'Create Entry'}</button>
+          <button onClick={() => setSplitStep(0)} style={{ padding: isMobile ? '10px 16px' : '7px 14px', background: 'none', border: '1px solid #2a3020', color: '#6b7a5a', borderRadius: '4px', cursor: 'pointer', fontSize: isMobile ? '14px' : '13px', flex: 1 }}>Cancel</button>
+        </div>
+      </>
+    )
     if (hideStep === 2) return (
       <>
         <div style={{ fontSize: '13px', color: '#ffaa44', marginBottom: '6px', fontWeight: 'bold' }}>⚠ Final Confirmation</div>
@@ -602,6 +645,9 @@ export default function Home() {
           <button onClick={() => { setEditOp(op); closePopup() }} style={{ padding: isMobile ? '10px 16px' : '7px 14px', backgroundColor: '#1a2a3a', border: 'none', color: '#aac8ff', borderRadius: '4px', cursor: 'pointer', fontSize: isMobile ? '14px' : '13px', flex: 1 }}>Edit</button>
           <button onClick={handleDelete} disabled={deleting} style={{ padding: isMobile ? '10px 16px' : '7px 14px', backgroundColor: '#6b1a1a', border: 'none', color: '#ffaaaa', borderRadius: '4px', cursor: 'pointer', fontSize: isMobile ? '14px' : '13px', flex: 1 }}>{deleting ? '...' : 'Delete'}</button>
           <button onClick={closePopup} style={{ padding: isMobile ? '10px 16px' : '7px 14px', background: 'none', border: '1px solid #2a3020', color: '#6b7a5a', borderRadius: '4px', cursor: 'pointer', fontSize: isMobile ? '14px' : '13px', flex: 1 }}>Cancel</button>
+        </div>
+        <div style={{ marginTop: '10px', paddingTop: '10px', borderTop: '1px solid #1a2016' }}>
+          <button onClick={() => { setSplitStep(1); setSplitDate('') }} style={{ width: '100%', padding: isMobile ? '10px 16px' : '7px 14px', backgroundColor: 'transparent', border: '1px solid #2a5a3a', color: '#6aaa6a', borderRadius: '4px', cursor: 'pointer', fontSize: isMobile ? '13px' : '12px' }}>Split — add another date for this operation</button>
         </div>
         {isJD && (
           <div style={{ marginTop: '10px', paddingTop: '10px', borderTop: '1px solid #1a2016' }}>
