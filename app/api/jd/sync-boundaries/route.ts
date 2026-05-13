@@ -37,7 +37,6 @@ async function getAccessToken() {
   return data.access_token
 }
 
-// Normalize field name for fuzzy matching — strip punctuation, extra spaces, lowercase
 function normalizeName(name: string): string {
   return name.toLowerCase().replace(/[^a-z0-9 ]/g, '').replace(/\s+/g, ' ').trim()
 }
@@ -45,30 +44,13 @@ function normalizeName(name: string): string {
 export async function GET() {
   try {
     const token = await getAccessToken()
-    const headers = {
-      'Authorization': `Bearer ${token}`,
-      'Accept': 'application/vnd.deere.axiom.v3+json'
-    }
-
-    // 1. Load all Supabase fields
-    const { data: supabaseFields } = await supabase
-      .from('fields')
-      .select('id, name')
-
-    if (!supabaseFields?.length) {
-      return NextResponse.json({ error: 'No fields found in Supabase' }, { status: 400 })
-    }
-
-    // Build a normalized name → id lookup
+    const headers = { 'Authorization': `Bearer ${token}`, 'Accept': 'application/vnd.deere.axiom.v3+json' }
+    const { data: supabaseFields } = await supabase.from('fields').select('id, name')
+    if (!supabaseFields?.length) return NextResponse.json({ error: 'No fields' }, { status: 400 })
     const fieldLookup: Record<string, string> = {}
-    for (const f of supabaseFields) {
-      fieldLookup[normalizeName(f.name)] = f.id
-    }
-
-    // 2. Fetch all JD fields (paginated)
-    let jdFields: { name: string; links: any[] }[] = []
-    let fieldsUrl: string = `${JD_BASE}/organizations/${ORG_ID}/fields?itemLimit=100`
-
+    for (const f of supabaseFields) fieldLookup[normalizeName(f.name)] = f.id
+    let jdFields: any[] = []
+    let fieldsUrl = `${JD_BASE}/organizations/${ORG_ID}/fields?itemLimit=100`
     while (fieldsUrl) {
       const res = await fetch(fieldsUrl, { headers })
       if (!res.ok) break
@@ -78,135 +60,49 @@ export async function GET() {
       fieldsUrl = next?.uri || ''
       await new Promise(r => setTimeout(r, 150))
     }
-
-    console.log(`Fetched ${jdFields.length} JD fields`)
-
-    // 3. For each JD field, find matching Supabase field and fetch boundary
-    const results: { field: string; status: string; matched?: string }[] = []
-    let updated = 0
-    let skipped = 0
-    let noMatch = 0
-    let noBoundary = 0
-
+    const results: any[] = []
+    let updated = 0, noMatch = 0, noBoundary = 0
     for (const jdField of jdFields) {
       const jdName = jdField.name || ''
-      const normalizedJdName = normalizeName(jdName)
-
-      // Find matching Supabase field — try exact match first, then partial
-      let supabaseId = fieldLookup[normalizedJdName]
-
+      let supabaseId = fieldLookup[normalizeName(jdName)]
       if (!supabaseId) {
-        // Try partial match: JD name contains or is contained by Supabase name
-        const match = Object.entries(fieldLookup).find(([sbName]) =>
-          sbName.includes(normalizedJdName) || normalizedJdName.includes(sbName)
-        )
+        const match = Object.entries(fieldLookup).find(([sbName]) => sbName.includes(normalizeName(jdName)) || normalizeName(jdName).includes(sbName))
         if (match) supabaseId = match[1]
       }
-
-      if (!supabaseId) {
-        results.push({ field: jdName, status: 'no_match' })
-        noMatch++
-        continue
-      }
-
+      if (!supabaseId) { results.push({ field: jdName, status: 'no_match' }); noMatch++; continue }
       const matchedField = supabaseFields.find(f => f.id === supabaseId)
-
-      // Find boundary link on the JD field resource
-      const boundaryLink = jdField.links?.find((l: any) =>
-        l.rel === 'boundary' || l.rel === 'boundaries'
-      )
-
+      const boundaryLink = jdField.links?.find((l: any) => l.rel === 'boundary' || l.rel === 'boundaries')
       if (!boundaryLink?.uri) {
-        // Try fetching the field directly to get its links
-        const fieldSelfLink = jdField.links?.find((l: any) => l.rel === 'self')
-        if (fieldSelfLink?.uri) {
-          const fieldRes = await fetch(fieldSelfLink.uri, { headers })
-          if (fieldRes.ok) {
-            const fieldData = await fieldRes.json()
-            const bLink = fieldData.links?.find((l: any) =>
-              l.rel === 'boundary' || l.rel === 'boundaries' || l.rel === 'activeFieldBoundary'
-            )
-            if (bLink?.uri) {
-              await fetchAndUpdateBoundary(bLink.uri, supabaseId, jdName, matchedField?.name || '', headers, results)
-              updated++
-              continue
-            }
+        const selfLink = jdField.links?.find((l: any) => l.rel === 'self')
+        if (selfLink?.uri) {
+          const fRes = await fetch(selfLink.uri, { headers })
+          if (fRes.ok) {
+            const fData = await fRes.json()
+            const bLink = fData.links?.find((l: any) => l.rel === 'boundary' || l.rel === 'boundaries' || l.rel === 'activeFieldBoundary')
+            if (bLink?.uri) { await fetchAndUpdateBoundary(bLink.uri, supabaseId, jdName, matchedField?.name || '', headers, results); updated++; continue }
           }
         }
-        results.push({ field: jdName, status: 'no_boundary_link', matched: matchedField?.name })
-        noBoundary++
-        await new Promise(r => setTimeout(r, 100))
-        continue
+        results.push({ field: jdName, status: 'no_boundary_link', matched: matchedField?.name }); noBoundary++
+        await new Promise(r => setTimeout(r, 100)); continue
       }
-
-      await fetchAndUpdateBoundary(boundaryLink.uri, supabaseId, jdName, matchedField?.name || '', headers, results)
-      updated++
+      await fetchAndUpdateBoundary(boundaryLink.uri, supabaseId, jdName, matchedField?.name || '', headers, results); updated++
       await new Promise(r => setTimeout(r, 150))
     }
-
-    return NextResponse.json({
-      success: true,
-      jd_fields_fetched: jdFields.length,
-      updated,
-      skipped,
-      no_match: noMatch,
-      no_boundary: noBoundary,
-      details: results
-    })
-
+    return NextResponse.json({ success: true, jd_fields_fetched: jdFields.length, updated, no_match: noMatch, no_boundary: noBoundary, details: results })
   } catch (err) {
-    console.error('Boundary sync error:', err)
     return NextResponse.json({ error: String(err) }, { status: 500 })
   }
 }
 
-async function fetchAndUpdateBoundary(
-  boundaryUri: string,
-  supabaseId: string,
-  jdName: string,
-  matchedName: string,
-  headers: Record<string, string>,
-  results: { field: string; status: string; matched?: string }[]
-) {
+async function fetchAndUpdateBoundary(boundaryUri: string, supabaseId: string, jdName: string, matchedName: string, headers: any, results: any[]) {
   try {
     const bRes = await fetch(boundaryUri, { headers })
-    if (!bRes.ok) {
-      results.push({ field: jdName, status: `boundary_fetch_failed_${bRes.status}`, matched: matchedName })
-      return
-    }
+    if (!bRes.ok) { results.push({ field: jdName, status: `boundary_fetch_failed_${bRes.status}`, matched: matchedName }); return }
     const bData = await bRes.json()
-
-    // Extract the GeoJSON geometry from the boundary response
-    // JD boundary responses can have different shapes — try several paths
-    let geometry =
-      bData.multipolygons?.[0] ||
-      bData.boundary ||
-      bData.geometry ||
-      bData
-
-    // If it has values array (paginated), take first
-    if (bData.values?.length > 0) {
-      const first = bData.values[0]
-      geometry = first.multipolygons?.[0] || first.boundary || first.geometry || first
-    }
-
-    // Ensure it has a valid GeoJSON type
-    if (!geometry?.type || !geometry?.coordinates) {
-      results.push({ field: jdName, status: 'invalid_geometry', matched: matchedName })
-      return
-    }
-
-    const { error } = await supabase
-      .from('fields')
-      .update({ boundary: geometry })
-      .eq('id', supabaseId)
-
-    if (error) {
-      results.push({ field: jdName, status: `db_error: ${error.message}`, matched: matchedName })
-    } else {
-      results.push({ field: jdName, status: 'updated', matched: matchedName })
-    }
-  } catch (err) {
-    results.push({ field: jdName, status: `error: ${String(err)}`, matched: matchedName })
-  }
+    let geometry = bData.multipolygons?.[0] || bData.boundary || bData.geometry || bData
+    if (bData.values?.length > 0) { const first = bData.values[0]; geometry = first.multipolygons?.[0] || first.boundary || first.geometry || first }
+    if (!geometry?.type || !geometry?.coordinates) { results.push({ field: jdName, status: 'invalid_geometry', matched: matchedName }); return }
+    const { error } = await supabase.from('fields').update({ boundary: geometry }).eq('id', supabaseId)
+    results.push({ field: jdName, status: error ? `db_error: ${error.message}` : 'updated', matched: matchedName })
+  } catch (err) { results.push({ field: jdName, status: `error: ${String(err)}`, matched: matchedName }) }
 }
