@@ -37,6 +37,7 @@ async function getAccessToken() {
   return data.access_token
 }
 
+// Normalize field name for fuzzy matching — strip punctuation, extra spaces, lowercase
 function normalizeName(name: string): string {
   return name.toLowerCase().replace(/[^a-z0-9 ]/g, '').replace(/\s+/g, ' ').trim()
 }
@@ -44,13 +45,30 @@ function normalizeName(name: string): string {
 export async function GET() {
   try {
     const token = await getAccessToken()
-    const headers = { 'Authorization': `Bearer ${token}`, 'Accept': 'application/vnd.deere.axiom.v3+json' }
-    const { data: supabaseFields } = await supabase.from('fields').select('id, name')
-    if (!supabaseFields?.length) return NextResponse.json({ error: 'No fields' }, { status: 400 })
+    const headers = {
+      'Authorization': `Bearer ${token}`,
+      'Accept': 'application/vnd.deere.axiom.v3+json'
+    }
+
+    // 1. Load all Supabase fields
+    const { data: supabaseFields } = await supabase
+      .from('fields')
+      .select('id, name')
+
+    if (!supabaseFields?.length) {
+      return NextResponse.json({ error: 'No fields found in Supabase' }, { status: 400 })
+    }
+
+    // Build a normalized name → id lookup
     const fieldLookup: Record<string, string> = {}
-    for (const f of supabaseFields) fieldLookup[normalizeName(f.name)] = f.id
-    let jdFields: any[] = []
-    let fieldsUrl = `${JD_BASE}/organizations/${ORG_ID}/fields?itemLimit=100`
+    for (const f of supabaseFields) {
+      fieldLookup[normalizeName(f.name)] = f.id
+    }
+
+    // 2. Fetch all JD fields (paginated)
+    let jdFields: { name: string; links: any[] }[] = []
+    let fieldsUrl: string = `${JD_BASE}/organizations/${ORG_ID}/fields?itemLimit=100`
+
     while (fieldsUrl) {
       const res = await fetch(fieldsUrl, { headers })
       if (!res.ok) break
@@ -60,49 +78,173 @@ export async function GET() {
       fieldsUrl = next?.uri || ''
       await new Promise(r => setTimeout(r, 150))
     }
-    const results: any[] = []
-    let updated = 0, noMatch = 0, noBoundary = 0
+
+    console.log(`Fetched ${jdFields.length} JD fields`)
+
+    // 3. For each JD field, find matching Supabase field and fetch boundary
+    const results: { field: string; status: string; matched?: string }[] = []
+    let updated = 0
+    let skipped = 0
+    let noMatch = 0
+    let noBoundary = 0
+
     for (const jdField of jdFields) {
       const jdName = jdField.name || ''
-      let supabaseId = fieldLookup[normalizeName(jdName)]
+      const normalizedJdName = normalizeName(jdName)
+
+      // Find matching Supabase field — try exact match first, then partial
+      let supabaseId = fieldLookup[normalizedJdName]
+
       if (!supabaseId) {
-        const match = Object.entries(fieldLookup).find(([sbName]) => sbName.includes(normalizeName(jdName)) || normalizeName(jdName).includes(sbName))
+        // Try partial match: JD name contains or is contained by Supabase name
+        const match = Object.entries(fieldLookup).find(([sbName]) =>
+          sbName.includes(normalizedJdName) || normalizedJdName.includes(sbName)
+        )
         if (match) supabaseId = match[1]
       }
-      if (!supabaseId) { results.push({ field: jdName, status: 'no_match' }); noMatch++; continue }
+
+      if (!supabaseId) {
+        results.push({ field: jdName, status: 'no_match' })
+        noMatch++
+        continue
+      }
+
       const matchedField = supabaseFields.find(f => f.id === supabaseId)
-      const boundaryLink = jdField.links?.find((l: any) => l.rel === 'boundary' || l.rel === 'boundaries')
+
+      // Find boundary link on the JD field resource
+      const boundaryLink = jdField.links?.find((l: any) =>
+        l.rel === 'boundary' || l.rel === 'boundaries'
+      )
+
       if (!boundaryLink?.uri) {
-        const selfLink = jdField.links?.find((l: any) => l.rel === 'self')
-        if (selfLink?.uri) {
-          const fRes = await fetch(selfLink.uri, { headers })
-          if (fRes.ok) {
-            const fData = await fRes.json()
-            const bLink = fData.links?.find((l: any) => l.rel === 'boundary' || l.rel === 'boundaries' || l.rel === 'activeFieldBoundary')
-            if (bLink?.uri) { await fetchAndUpdateBoundary(bLink.uri, supabaseId, jdName, matchedField?.name || '', headers, results); updated++; continue }
+        // Try fetching the field directly to get its links
+        const fieldSelfLink = jdField.links?.find((l: any) => l.rel === 'self')
+        if (fieldSelfLink?.uri) {
+          const fieldRes = await fetch(fieldSelfLink.uri, { headers })
+          if (fieldRes.ok) {
+            const fieldData = await fieldRes.json()
+            const bLink = fieldData.links?.find((l: any) =>
+              l.rel === 'boundary' || l.rel === 'boundaries' || l.rel === 'activeFieldBoundary'
+            )
+            if (bLink?.uri) {
+              const prevLen = results.length
+              await fetchAndUpdateBoundary(bLink.uri, supabaseId, jdName, matchedField?.name || '', headers, results)
+              if (results[results.length - 1]?.status === 'updated') updated++
+              continue
+            }
           }
         }
-        results.push({ field: jdName, status: 'no_boundary_link', matched: matchedField?.name }); noBoundary++
-        await new Promise(r => setTimeout(r, 100)); continue
+        results.push({ field: jdName, status: 'no_boundary_link', matched: matchedField?.name })
+        noBoundary++
+        await new Promise(r => setTimeout(r, 100))
+        continue
       }
-      await fetchAndUpdateBoundary(boundaryLink.uri, supabaseId, jdName, matchedField?.name || '', headers, results); updated++
+
+      await fetchAndUpdateBoundary(boundaryLink.uri, supabaseId, jdName, matchedField?.name || '', headers, results)
+      if (results[results.length - 1]?.status === 'updated') updated++
       await new Promise(r => setTimeout(r, 150))
     }
-    return NextResponse.json({ success: true, jd_fields_fetched: jdFields.length, updated, no_match: noMatch, no_boundary: noBoundary, details: results })
+
+    return NextResponse.json({
+      success: true,
+      jd_fields_fetched: jdFields.length,
+      updated,
+      skipped,
+      no_match: noMatch,
+      no_boundary: noBoundary,
+      details: results
+    })
+
   } catch (err) {
+    console.error('Boundary sync error:', err)
     return NextResponse.json({ error: String(err) }, { status: 500 })
   }
 }
 
-async function fetchAndUpdateBoundary(boundaryUri: string, supabaseId: string, jdName: string, matchedName: string, headers: any, results: any[]) {
+// Convert JD's proprietary multipolygon format (rings/points) to GeoJSON
+// JD format: { multipolygons: [{ rings: [{ points: [{lat,lon},...], type: 'exterior'|'interior' }] }] }
+function jdToGeoJSON(bData: any): any {
+  // Already standard GeoJSON?
+  if (bData?.type && bData?.coordinates) return bData
+
+  // Unwrap paginated values
+  const item = bData?.values?.[0] ?? bData
+
+  // Try standard GeoJSON paths first
+  const direct = item?.geometry || item?.boundary
+  if (direct?.type && direct?.coordinates) return direct
+
+  // Convert JD multipolygon format
+  const multipolygons = item?.multipolygons ?? []
+  if (multipolygons.length === 0) return null
+
+  // Build GeoJSON MultiPolygon from JD rings
+  const geoPolygons: number[][][][] = []
+  for (const mp of multipolygons) {
+    const rings: number[][][] = []
+    const exterior: number[][] = []
+    const holes: number[][][] = []
+    for (const ring of mp.rings ?? []) {
+      const coords: number[][] = (ring.points ?? []).map((p: any) => [p.lon ?? p.x, p.lat ?? p.y])
+      // Close the ring if needed
+      if (coords.length > 0 && (coords[0][0] !== coords[coords.length-1][0] || coords[0][1] !== coords[coords.length-1][1])) {
+        coords.push(coords[0])
+      }
+      if (ring.type === 'interior' || ring.type === 'hole') {
+        holes.push(coords)
+      } else {
+        exterior.push(...[coords])
+      }
+    }
+    // GeoJSON Polygon: [exteriorRing, ...holes]
+    if (exterior.length > 0) {
+      geoPolygons.push([exterior[0], ...holes])
+    }
+  }
+
+  if (geoPolygons.length === 0) return null
+
+  if (geoPolygons.length === 1) {
+    return { type: 'Polygon', coordinates: geoPolygons[0] }
+  }
+  return { type: 'MultiPolygon', coordinates: geoPolygons }
+}
+
+async function fetchAndUpdateBoundary(
+  boundaryUri: string,
+  supabaseId: string,
+  jdName: string,
+  matchedName: string,
+  headers: Record<string, string>,
+  results: { field: string; status: string; matched?: string }[]
+) {
   try {
     const bRes = await fetch(boundaryUri, { headers })
-    if (!bRes.ok) { results.push({ field: jdName, status: `boundary_fetch_failed_${bRes.status}`, matched: matchedName }); return }
+    if (!bRes.ok) {
+      results.push({ field: jdName, status: `boundary_fetch_failed_${bRes.status}`, matched: matchedName })
+      return
+    }
     const bData = await bRes.json()
-    let geometry = bData.multipolygons?.[0] || bData.boundary || bData.geometry || bData
-    if (bData.values?.length > 0) { const first = bData.values[0]; geometry = first.multipolygons?.[0] || first.boundary || first.geometry || first }
-    if (!geometry?.type || !geometry?.coordinates) { results.push({ field: jdName, status: 'invalid_geometry', matched: matchedName }); return }
-    const { error } = await supabase.from('fields').update({ boundary: geometry }).eq('id', supabaseId)
-    results.push({ field: jdName, status: error ? `db_error: ${error.message}` : 'updated', matched: matchedName })
-  } catch (err) { results.push({ field: jdName, status: `error: ${String(err)}`, matched: matchedName }) }
+
+    const geometry = jdToGeoJSON(bData)
+
+    if (!geometry?.type || !geometry?.coordinates) {
+      // Store raw for debugging so we can see what JD actually returned
+      results.push({ field: jdName, status: `invalid_geometry (keys: ${Object.keys(bData).join(',')})`, matched: matchedName })
+      return
+    }
+
+    const { error } = await supabase
+      .from('fields')
+      .update({ boundary: geometry })
+      .eq('id', supabaseId)
+
+    if (error) {
+      results.push({ field: jdName, status: `db_error: ${error.message}`, matched: matchedName })
+    } else {
+      results.push({ field: jdName, status: 'updated', matched: matchedName })
+    }
+  } catch (err) {
+    results.push({ field: jdName, status: `error: ${String(err)}`, matched: matchedName })
+  }
 }
