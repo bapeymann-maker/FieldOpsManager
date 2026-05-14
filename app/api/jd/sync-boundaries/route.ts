@@ -182,7 +182,7 @@ function jdToGeoJSON(bData: any): any {
   const geoPolygons: number[][][][] = []
   for (const mp of multipolygons) {
     const rings: number[][][] = []
-    const exterior: number[][] = []
+    const exterior: number[][][] = []
     const holes: number[][][] = []
     for (const ring of mp.rings ?? []) {
       const coords: number[][] = (ring.points ?? []).map((p: any) => [p.lon ?? p.x, p.lat ?? p.y])
@@ -193,7 +193,7 @@ function jdToGeoJSON(bData: any): any {
       if (ring.type === 'interior' || ring.type === 'hole') {
         holes.push(coords)
       } else {
-        exterior.push(...[coords])
+        exterior.push(coords)
       }
     }
     // GeoJSON Polygon: [exteriorRing, ...holes]
