@@ -492,7 +492,11 @@ export default function Home() {
     }
     closePopup()
     if (view === 'year') loadYearData(); else if (view === 'log') loadLogData(); else loadData()
-  } await supabase.auth.signOut(); router.push('/login'); router.refresh() }
+  }
+
+  async function handleSignOut() {
+    await supabase.auth.signOut(); router.push('/login'); router.refresh()
+  }
 
   async function handleDelete() {
     if (!selectedOp) return
