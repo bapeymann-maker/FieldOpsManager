@@ -157,6 +157,7 @@ const WEED_COLS = [
   { label: 'GDU Since Plant', width: '85px' },
   { label: 'Stage', width: '75px' },
   { label: 'Last Tillage', width: '70px' },
+  { label: 'Till Date', width: '72px' },
   { label: 'GDU↑', width: '55px' },
   { label: 'Rain↑', width: '55px' },
   { label: 'Next Action', width: '110px' },
@@ -961,6 +962,7 @@ export default function Home() {
                                   <td style={{ padding: '7px 10px', fontSize: '12px', color: '#c8d4a0', borderBottom: '1px solid #1a2016', overflow: 'hidden' }}>{Math.round(gdu)}</td>
                                   <td style={{ padding: '7px 10px', fontSize: '12px', color: '#8a9a6a', borderBottom: '1px solid #1a2016', overflow: 'hidden' }}>{stage}</td>
                                   <td style={{ padding: '7px 10px', fontSize: '11px', color: '#6b7a5a', borderBottom: '1px solid #1a2016', overflow: 'hidden' }}>{f.lastTillageOpName ? (OP_ABBREV[f.lastTillageOpName] || f.lastTillageOpName) : '—'}</td>
+                                  <td style={{ padding: '7px 10px', fontSize: '11px', color: '#8a9a6a', borderBottom: '1px solid #1a2016', overflow: 'hidden' }}>{f.lastTillageDate ? new Date(f.lastTillageDate + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '—'}</td>
                                   <td style={{ padding: '7px 10px', fontSize: '12px', color: hasTillage ? '#cc8800' : '#6b7a5a', borderBottom: '1px solid #1a2016', fontWeight: hasTillage ? 'bold' : 'normal', overflow: 'hidden' }}>{hasTillage ? f.gduSinceLastTillage : `(${Math.round(gdu)})`}</td>
                                   <td style={{ padding: '7px 10px', fontSize: '12px', color: '#6aaa6a', borderBottom: '1px solid #1a2016', overflow: 'hidden' }}>{hasTillage && f.rainfallSinceLastTillage !== undefined ? `${f.rainfallSinceLastTillage}"` : '—'}</td>
                                   <td style={{ padding: '7px 10px', fontSize: '12px', color: '#c8d4a0', borderBottom: '1px solid #1a2016', overflow: 'hidden' }}>{nextAction ? nextAction.action : 'Beyond V6'}</td>
