@@ -27,7 +27,7 @@ const MACHINE_ROLES: Record<string, string> = {
   '4844531': 'seeding',  // 8RT 370 #3 Ufer
 }
 
-const ENGINE_OFF_SPLIT_MINUTES = 60
+const ENGINE_OFF_SPLIT_MINUTES = 120
 
 async function getAccessToken() {
   const { data } = await supabase.from('jd_tokens').select('*').eq('id', 1).single()
@@ -387,7 +387,7 @@ export async function GET(request: Request) {
           }
         }
 
-        // GPS gap fallback — catches overnight stops with no engine state transition recorded
+        // GPS gap fallback â catches overnight stops with no engine state transition recorded
         if (sessionStart && lastTs && currentFieldId) {
           const gapMinutes = (new Date(loc.ts).getTime() - new Date(lastTs).getTime()) / 60000
           const alreadySplit = splitPoints.some(s => s > lastTs! && s <= loc.ts)

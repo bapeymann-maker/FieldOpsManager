@@ -241,7 +241,7 @@ async function main() {
         max_temp: Math.round(obs.maxF * 10) / 10,
         min_temp: Math.round(obs.minF * 10) / 10,
         daily_gdu: dailyGDU,
-        daily_gdu_corn: dailyGDU_corn,
+        daily_gdu_corn: dailyGDU_corm,
         rainfall_inches: rainfallInches,
         cumulative_gdu: cumulativeGDU,
         cumulative_gdu_corn: cumulativeGDU_corn,
