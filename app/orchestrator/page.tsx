@@ -35,7 +35,7 @@ import {
   updateTask,
 } from '@/lib/orchestrator-data'
 import type { ResourcePatch } from '@/components/orchestrator/ResourcePool'
-import DayTimeline from '@/components/orchestrator/DayTimeline'
+import DayTimeline, { type DayCursor } from '@/components/orchestrator/DayTimeline'
 import WeekGrid from '@/components/orchestrator/WeekGrid'
 import ResourcePool from '@/components/orchestrator/ResourcePool'
 import TeamsPanel from '@/components/orchestrator/TeamsPanel'
@@ -59,6 +59,7 @@ export default function OrchestratorPage() {
   const [error, setError] = useState('')
   const [showNew, setShowNew] = useState(false)
   const [editingTask, setEditingTask] = useState<Task | null>(null)
+  const [dayCursor, setDayCursor] = useState<DayCursor | null>(null)
 
   // Tick the scrub line / "now"-based status every 30s.
   useEffect(() => {
@@ -66,8 +67,13 @@ export default function OrchestratorPage() {
     return () => clearInterval(id)
   }, [])
 
+  // Day view now scrolls 2 days before/after the selected date (see
+  // DayTimeline's WINDOW_RADIUS), so it needs that whole window's tasks.
   const visibleDates = useMemo(
-    () => (currentView === 'day' ? [currentDate] : weekDays(startOfWeek(currentDate))),
+    () =>
+      currentView === 'day'
+        ? [-2, -1, 0, 1, 2].map((o) => addDays(currentDate, o))
+        : weekDays(startOfWeek(currentDate)),
     [currentView, currentDate],
   )
   const visibleKey = visibleDates.join(',')
@@ -332,13 +338,14 @@ export default function OrchestratorPage() {
             <DayTimeline
               dateStr={currentDate}
               now={now}
-              tasks={tasksForCurrentDate}
+              tasks={tasks}
               taskTypes={lookups.taskTypes}
               fields={lookups.fields}
               resources={lookups.resources}
               onToggleComplete={handleToggleComplete}
               onDelete={handleDelete}
               onSelect={setEditingTask}
+              onCursorChange={setDayCursor}
             />
           ) : (
             <WeekGrid
@@ -358,9 +365,10 @@ export default function OrchestratorPage() {
 
           <ResourcePool
             resources={lookups.resources}
-            tasks={tasksForCurrentDate}
+            tasks={tasks}
             dateStr={currentDate}
             now={now}
+            cursor={currentView === 'day' ? dayCursor : null}
             onAddResource={(input) => {
               handleAddResource(input).catch((e) => setError(msg(e)))
             }}
