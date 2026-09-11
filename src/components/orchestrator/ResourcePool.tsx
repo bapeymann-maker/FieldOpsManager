@@ -213,8 +213,8 @@ export default function ResourcePool({
       >
         <span
           style={{
-            width: '7px',
-            height: '7px',
+            width: '21px',
+            height: '21px',
             borderRadius: '50%',
             backgroundColor: STATUS_COLOR[status],
             flexShrink: 0,

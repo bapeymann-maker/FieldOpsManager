@@ -59,7 +59,7 @@ export const btn = {
 
 export const STATUS_COLOR = {
   available: C.greenText,
-  busy: C.amberText,
+  busy: '#e0524f',
   'off-shift': C.muted,
-  conflict: '#ff6b6b',
+  conflict: '#ff3b3b',
 } as const
