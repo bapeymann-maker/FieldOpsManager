@@ -19,6 +19,7 @@ type Props = {
   resources: Resource[] // full pool, for name/shift lookup
   conflicted: boolean
   labelWidth: number
+  trackWidth: number
   onToggleComplete: (task: Task) => void
   onDelete: (task: Task) => void
   onSelect?: (task: Task) => void
@@ -31,6 +32,7 @@ export default function TaskRow({
   resources,
   conflicted,
   labelWidth,
+  trackWidth,
   onToggleComplete,
   onDelete,
   onSelect,
@@ -54,11 +56,15 @@ export default function TaskRow({
         opacity: task.completed ? 0.5 : 1,
       }}
     >
-      {/* Label cell */}
+      {/* Label cell — sticky so it stays put while the hour track scrolls */}
       <div
         style={{
           width: labelWidth,
           flexShrink: 0,
+          position: 'sticky',
+          left: 0,
+          zIndex: 1,
+          backgroundColor: C.panel,
           padding: '8px 10px',
           borderRight: `1px solid ${C.border}`,
           display: 'flex',
@@ -121,8 +127,9 @@ export default function TaskRow({
         )}
       </div>
 
-      {/* Bar track */}
-      <div style={{ position: 'relative', flex: 1, minHeight: '44px' }}>
+      {/* Bar track — fixed width matching the hour ruler above, not flex:1,
+          so percentage-based bar positions line up with the scrolled ruler */}
+      <div style={{ position: 'relative', width: trackWidth, flexShrink: 0, minHeight: '44px' }}>
         <div
           style={{
             position: 'absolute',
