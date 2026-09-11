@@ -133,6 +133,21 @@ create table if not exists task_resources (
   primary key (task_id, resource_id)
 );
 
+-- Default equipment/operator pairings (tractor+implement, person+tractor,
+-- semi+trailer, ...) — not tied to any one task, just "these usually go
+-- together" so the daily report can group them. Undirected: always stored
+-- with the smaller id first (enforced by the check + the data-layer helper
+-- that writes these rows) so a pair is never duplicated in both orders.
+create table if not exists resource_pairings (
+  resource_id_a uuid not null references resources(id) on delete cascade,
+  resource_id_b uuid not null references resources(id) on delete cascade,
+  created_at    timestamptz not null default now(),
+  primary key (resource_id_a, resource_id_b),
+  check (resource_id_a::text < resource_id_b::text)
+);
+
+create index if not exists idx_resource_pairings_b on resource_pairings(resource_id_b);
+
 create index if not exists idx_tasks_date            on tasks(task_date);
 create index if not exists idx_task_resources_resource on task_resources(resource_id);
 
@@ -182,6 +197,7 @@ alter table default_groups          enable row level security;
 alter table default_group_resources enable row level security;
 alter table tasks                   enable row level security;
 alter table task_resources          enable row level security;
+alter table resource_pairings       enable row level security;
 
 -- SECURITY DEFINER so it can read `profiles` regardless of that table's policies
 create or replace function has_orchestrator_access() returns boolean
@@ -197,7 +213,7 @@ declare t text;
 begin
   foreach t in array array[
     'task_types','resources','default_groups','default_group_resources',
-    'tasks','task_resources'
+    'tasks','task_resources','resource_pairings'
   ] loop
     execute format('drop policy if exists "orchestrator access" on %I', t);
     execute format(

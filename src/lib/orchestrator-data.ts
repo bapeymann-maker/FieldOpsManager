@@ -13,6 +13,7 @@ import type {
   NewTaskInput,
   OrchestratorField,
   Resource,
+  ResourcePairing,
   Task,
   TaskType,
 } from './orchestrator'
@@ -34,12 +35,13 @@ export type Lookups = {
   fields: OrchestratorField[]
   resources: Resource[]
   defaultGroups: DefaultGroup[]
+  pairings: ResourcePairing[]
 }
 
 /** Low-change reference data — fetch once per session. */
 export async function fetchLookups(): Promise<Lookups> {
   const c = orchestratorClient()
-  const [taskTypesRes, fieldsRes, resourcesRes, groupsRes] = await Promise.all([
+  const [taskTypesRes, fieldsRes, resourcesRes, groupsRes, pairingsRes] = await Promise.all([
     c.from('task_types').select('id, name').order('name'),
     c.from('fields').select('id, name, active, region, client').order('name'),
     c
@@ -53,9 +55,10 @@ export async function fetchLookups(): Promise<Lookups> {
       .from('default_groups')
       .select('id, task_type_id, name, shift_start, shift_end, default_group_resources(resource_id)')
       .order('name'),
+    c.from('resource_pairings').select('resource_id_a, resource_id_b'),
   ])
 
-  for (const res of [taskTypesRes, fieldsRes, resourcesRes, groupsRes]) {
+  for (const res of [taskTypesRes, fieldsRes, resourcesRes, groupsRes, pairingsRes]) {
     if (res.error) throw res.error
   }
 
@@ -70,11 +73,35 @@ export async function fetchLookups(): Promise<Lookups> {
     ),
   }))
 
+  const pairings: ResourcePairing[] = (pairingsRes.data ?? []).map((p: Record<string, unknown>) => ({
+    a: p.resource_id_a as string,
+    b: p.resource_id_b as string,
+  }))
+
   return {
     taskTypes: (taskTypesRes.data ?? []) as TaskType[],
     fields: ((fieldsRes.data ?? []) as OrchestratorField[]).filter((f) => f.active !== false),
     resources: ((resourcesRes.data ?? []) as Resource[]).filter((r) => r.active !== false),
     defaultGroups,
+    pairings,
+  }
+}
+
+/** Replaces every pairing edge touching `resourceId` with the given partner set. */
+export async function setResourcePairings(resourceId: string, partnerIds: string[]): Promise<void> {
+  const c = orchestratorClient()
+  const { error: delErr } = await c
+    .from('resource_pairings')
+    .delete()
+    .or(`resource_id_a.eq.${resourceId},resource_id_b.eq.${resourceId}`)
+  if (delErr) throw delErr
+  if (partnerIds.length) {
+    const rows = partnerIds.map((pid) => {
+      const [a, b] = resourceId < pid ? [resourceId, pid] : [pid, resourceId]
+      return { resource_id_a: a, resource_id_b: b }
+    })
+    const { error: insErr } = await c.from('resource_pairings').insert(rows)
+    if (insErr) throw insErr
   }
 }
 

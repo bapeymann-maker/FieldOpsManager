@@ -457,3 +457,124 @@ export function parseShiftHour(raw: string): number | null {
   if (!Number.isFinite(n)) return null
   return ((Math.round(n) % 24) + 24) % 24
 }
+
+// ── Resource pairings (tractor+implement, operator+equipment, semi+trailer) ─
+
+/** An undirected pairing edge — always stored/read with a < b. */
+export type ResourcePairing = { a: string; b: string }
+
+const PAIRABLE_ASSET_CATEGORIES = new Set(['Tractor|Implement', 'Tractor|Grain Cart', 'Semi|Trailer'])
+const OPERATOR_CATEGORIES = new Set(['Tractor', 'Semi', 'Combine'])
+
+/** Can these two resources be paired as a default equipment/operator set? */
+export function canPair(a: Resource, b: Resource): boolean {
+  if (a.id === b.id) return false
+  const isEmpA = a.type === 'employee'
+  const isEmpB = b.type === 'employee'
+  if (isEmpA && isEmpB) return false
+  if (isEmpA) return OPERATOR_CATEGORIES.has(b.category ?? '')
+  if (isEmpB) return OPERATOR_CATEGORIES.has(a.category ?? '')
+  const catA = a.category ?? ''
+  const catB = b.category ?? ''
+  return PAIRABLE_ASSET_CATEGORIES.has(`${catA}|${catB}`) || PAIRABLE_ASSET_CATEGORIES.has(`${catB}|${catA}`)
+}
+
+/** Every resource currently paired with `resource`, per the given pairing set. */
+export function pairedWith(resource: Resource, pairings: ResourcePairing[]): string[] {
+  return pairings
+    .filter((p) => p.a === resource.id || p.b === resource.id)
+    .map((p) => (p.a === resource.id ? p.b : p.a))
+}
+
+/**
+ * Groups a task's assigned resources into pairing clusters — connected
+ * components using only pairing edges where *both* ends are actually on this
+ * task — for the daily report. A resource with no paired partner on the task
+ * comes back as its own single-item cluster.
+ */
+export function clusterPairedResources(resourceIds: string[], pairings: ResourcePairing[]): string[][] {
+  const idSet = new Set(resourceIds)
+  const adjacency = new Map<string, Set<string>>()
+  for (const id of resourceIds) adjacency.set(id, new Set())
+  for (const p of pairings) {
+    if (idSet.has(p.a) && idSet.has(p.b)) {
+      adjacency.get(p.a)?.add(p.b)
+      adjacency.get(p.b)?.add(p.a)
+    }
+  }
+  const seen = new Set<string>()
+  const clusters: string[][] = []
+  for (const id of resourceIds) {
+    if (seen.has(id)) continue
+    const cluster: string[] = []
+    const stack = [id]
+    while (stack.length > 0) {
+      const cur = stack.pop()!
+      if (seen.has(cur)) continue
+      seen.add(cur)
+      cluster.push(cur)
+      for (const next of adjacency.get(cur) ?? []) if (!seen.has(next)) stack.push(next)
+    }
+    clusters.push(cluster)
+  }
+  return clusters
+}
+
+// ── Daily report ─────────────────────────────────────────────────────────
+
+/** Plain-text daily task list, grouped by pairing, for copying out to the crew. */
+export function buildDailyReportText(
+  dateStr: string,
+  tasks: Task[],
+  taskTypes: TaskType[],
+  fields: OrchestratorField[],
+  resources: Resource[],
+  pairings: ResourcePairing[],
+): string {
+  const typeById = new Map(taskTypes.map((t) => [t.id, t]))
+  const fieldById = new Map(fields.map((f) => [f.id, f]))
+  const resourceById = new Map(resources.map((r) => [r.id, r]))
+  const dayTasks = tasks
+    .filter((t) => t.task_date === dateStr)
+    .sort((a, b) => {
+      if (a.completed !== b.completed) return a.completed ? 1 : -1
+      return a.start_hour - b.start_hour
+    })
+
+  const lines: string[] = [`FIELD OPS — ${formatDateLong(dateStr)}`, '']
+
+  if (dayTasks.length === 0) {
+    lines.push('No tasks scheduled.')
+    return lines.join('\n')
+  }
+
+  for (const t of dayTasks) {
+    const type = typeById.get(t.task_type_id)
+    const field = t.field_id ? fieldById.get(t.field_id) : undefined
+    const timeStr = t.all_day ? 'All day' : `${formatHour(t.start_hour)}–${formatHour(t.end_hour)}`
+    const titleParts = [type?.name, field?.name, t.title].filter(Boolean)
+    lines.push(`${t.completed ? '[DONE] ' : ''}${timeStr} — ${titleParts.join(' / ')}`)
+
+    if (type?.name === 'Hauling' && t.details) {
+      const haul = t.details as HaulDetails
+      lines.push(
+        `  ${haul.commodity}: ${formatHaulLocation(haul.origin, fields)} -> ${formatHaulLocation(haul.destination, fields)}`,
+      )
+    }
+
+    const clusters = clusterPairedResources(t.resource_ids, pairings)
+    if (clusters.length === 0) {
+      lines.push('  (no resources assigned)')
+    } else {
+      for (const cluster of clusters) {
+        const names = cluster
+          .map((id) => resourceById.get(id)?.name)
+          .filter((n): n is string => !!n)
+        if (names.length) lines.push(`  ${names.join(' + ')}`)
+      }
+    }
+    lines.push('')
+  }
+
+  return lines.join('\n').trimEnd()
+}
