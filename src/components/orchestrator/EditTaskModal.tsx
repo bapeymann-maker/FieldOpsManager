@@ -8,8 +8,10 @@ import {
   type NewTaskInput,
   type OrchestratorField,
   type Resource,
+  type ResourcePairing,
   type Task,
   type TaskType,
+  equipmentCategoriesForTaskType,
   fieldSectionOf,
   fieldsInSection,
   formatHaulLocation,
@@ -18,6 +20,7 @@ import {
   groupEmployeesByDivision,
   isDayAvailable,
   isSameLocalDay,
+  pairedWith,
   resourceStatusNow,
 } from '@/lib/orchestrator'
 import { C } from './ui'
@@ -29,6 +32,7 @@ type Props = {
   taskTypes: TaskType[]
   fields: OrchestratorField[]
   resources: Resource[]
+  pairings: ResourcePairing[]
   tasks: Task[] // all loaded tasks; filtered internally to the edited date
   onClose: () => void
   onSave: (taskId: string, patch: Partial<NewTaskInput>, resourceIds: string[]) => Promise<void>
@@ -39,6 +43,7 @@ type Props = {
     type: 'asset' | 'employee'
     shift_start: number | null
     shift_end: number | null
+    category?: string | null
   }) => Promise<Resource>
 }
 
@@ -50,6 +55,7 @@ export default function EditTaskModal({
   taskTypes,
   fields,
   resources,
+  pairings,
   tasks,
   onClose,
   onSave,
@@ -75,19 +81,43 @@ export default function EditTaskModal({
   const [pickedResources, setPickedResources] = useState<Set<string>>(new Set(task.resource_ids))
   const [newFieldName, setNewFieldName] = useState('')
   const [newResName, setNewResName] = useState('')
+  const [newAssetCategory, setNewAssetCategory] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
 
   const fieldsForSection = useMemo(() => (section ? fieldsInSection(fields, section) : []), [fields, section])
-  const equipmentGroups = useMemo(() => groupAssetsByCategory(resources), [resources])
+  const equipmentCategories = equipmentCategoriesForTaskType(taskType?.name)
+  const equipmentGroups = useMemo(
+    () => groupAssetsByCategory(resources, equipmentCategories),
+    [resources, equipmentCategories],
+  )
   const crewGroups = useMemo(() => groupEmployeesByDivision(resources), [resources])
   const tasksOnDate = useMemo(() => tasks.filter((t) => t.task_date === taskDate), [tasks, taskDate])
 
   function toggleResource(id: string) {
+    if (pickedResources.has(id)) {
+      setPickedResources((prev) => {
+        const next = new Set(prev)
+        next.delete(id)
+        return next
+      })
+      return
+    }
+    const additions = [id]
+    const resource = resources.find((r) => r.id === id)
+    if (resource) {
+      const partners = pairedWith(resource, pairings)
+        .map((pid) => resources.find((r) => r.id === pid))
+        .filter((r): r is Resource => !!r && !pickedResources.has(r.id))
+      for (const partner of partners) {
+        if (confirm(`${resource.name} is paired with ${partner.name}. Include ${partner.name} too?`)) {
+          additions.push(partner.id)
+        }
+      }
+    }
     setPickedResources((prev) => {
       const next = new Set(prev)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
+      for (const a of additions) next.add(a)
       return next
     })
   }
@@ -108,10 +138,10 @@ export default function EditTaskModal({
     }
   }
 
-  async function addResourceOfType(type: 'asset' | 'employee') {
+  async function addResourceOfType(type: 'asset' | 'employee', category: string | null = null) {
     if (!newResName.trim()) return
     try {
-      const r = await onAddResource({ name: newResName.trim(), type, shift_start: null, shift_end: null })
+      const r = await onAddResource({ name: newResName.trim(), type, shift_start: null, shift_end: null, category })
       setPickedResources((prev) => new Set(prev).add(r.id))
       setNewResName('')
     } catch (e) {
@@ -293,9 +323,18 @@ export default function EditTaskModal({
           </div>
         )}
 
-        <Label>Equipment</Label>
+        <Label>
+          Equipment
+          {equipmentCategories && (
+            <span style={{ textTransform: 'none', letterSpacing: 0 }}> — {equipmentCategories.join(' / ')} only</span>
+          )}
+        </Label>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', maxHeight: '200px', overflowY: 'auto', marginBottom: '10px' }}>
-          {equipmentGroups.length === 0 && <div style={{ fontSize: '12px', color: C.muted }}>No equipment yet.</div>}
+          {equipmentGroups.length === 0 && (
+            <div style={{ fontSize: '12px', color: C.muted }}>
+              {equipmentCategories ? `No ${equipmentCategories.join(' or ')} yet.` : 'No equipment yet.'}
+            </div>
+          )}
           {equipmentGroups.map((g) => (
             <div key={g.label}>
               <div style={{ fontSize: '10px', letterSpacing: '0.1em', textTransform: 'uppercase', color: '#4a5a3a', marginBottom: '4px' }}>
@@ -318,8 +357,24 @@ export default function EditTaskModal({
           ))}
         </div>
         <div style={{ display: 'flex', gap: '6px', marginBottom: '18px' }}>
+          {equipmentCategories && (
+            <select
+              value={newAssetCategory || equipmentCategories[0]}
+              onChange={(e) => setNewAssetCategory(e.target.value)}
+              style={{ ...inputStyle, width: '110px' }}
+            >
+              {equipmentCategories.map((c) => (
+                <option key={c} value={c}>
+                  {c}
+                </option>
+              ))}
+            </select>
+          )}
           <input value={newResName} onChange={(e) => setNewResName(e.target.value)} placeholder="+ Add equipment" style={inputStyle} />
-          <button onClick={() => addResourceOfType('asset')} style={ghostBtn}>
+          <button
+            onClick={() => addResourceOfType('asset', equipmentCategories ? newAssetCategory || equipmentCategories[0] : null)}
+            style={ghostBtn}
+          >
             Add
           </button>
         </div>
