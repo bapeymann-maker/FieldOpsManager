@@ -388,3 +388,20 @@ export function formatShiftWindow(start: number | null, end: number | null): str
   if (start == null || end == null) return 'Any time'
   return `${formatHour(start)}–${formatHour(end)}`
 }
+
+/**
+ * Parses a free-typed shift-hour field into an integer 0-23, or null for
+ * "any time" (blank/invalid). `resources.shift_start`/`shift_end` are
+ * DB-constrained to 0-23 — 24 isn't a valid hour there because "midnight" is
+ * already hour 0 in the wrap-around window model (hourInWindow treats
+ * shift_end < shift_start as wrapping past midnight). Typing 24 for "works
+ * until midnight" is a natural mistake, so it's normalized to 0 rather than
+ * rejected outright.
+ */
+export function parseShiftHour(raw: string): number | null {
+  const trimmed = raw.trim()
+  if (trimmed === '') return null
+  const n = Number(trimmed)
+  if (!Number.isFinite(n)) return null
+  return ((Math.round(n) % 24) + 24) % 24
+}
