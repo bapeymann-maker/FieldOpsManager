@@ -2,8 +2,10 @@
 
 import React, { useMemo, useState } from 'react'
 import {
+  ASSET_CATEGORIES,
   BIN_SITES,
   ELEVATORS,
+  EMPLOYEE_DIVISIONS,
   FIELD_SECTIONS,
   HAUL_COMMODITIES,
   type DefaultGroup,
@@ -14,6 +16,7 @@ import {
   type NewTaskInput,
   type OrchestratorField,
   type Resource,
+  type ResourceStatus,
   type Task,
   type TaskType,
   fieldsInSection,
@@ -63,7 +66,8 @@ type Screen =
   | 'haul-dest-bin-number'
   | 'haul-dest-elevator'
   | 'haul-dest-other'
-  | 'crew'
+  | 'equipment'
+  | 'employees'
   | 'details'
 
 const SCREEN_LABELS: Record<Screen, string> = {
@@ -79,7 +83,8 @@ const SCREEN_LABELS: Record<Screen, string> = {
   'haul-dest-bin-number': 'Destination bin #',
   'haul-dest-elevator': 'Elevator',
   'haul-dest-other': 'Destination',
-  crew: 'Crew',
+  equipment: 'Equipment',
+  employees: 'Crew',
   details: 'Details',
 }
 
@@ -113,7 +118,6 @@ export default function NewTaskModal({
 
   const [newFieldName, setNewFieldName] = useState('')
   const [newResName, setNewResName] = useState('')
-  const [newResKind, setNewResKind] = useState<'asset' | 'employee'>('asset')
 
   // Hauling-only state
   const [commodity, setCommodity] = useState<HaulCommodity | ''>('')
@@ -137,6 +141,34 @@ export default function NewTaskModal({
     () => defaultGroups.filter((g) => g.task_type_id === typeId),
     [defaultGroups, typeId],
   )
+
+  // Equipment grouped by category; Crew grouped by division (Ufer before LB Pork).
+  const UNGROUPED = 'Other'
+  const equipmentGroups = useMemo(() => {
+    const assets = resources.filter((r) => r.type === 'asset')
+    const byCat = new Map<string, Resource[]>()
+    for (const r of assets) {
+      const cat = r.category || UNGROUPED
+      const list = byCat.get(cat)
+      if (list) list.push(r)
+      else byCat.set(cat, [r])
+    }
+    const order = [...ASSET_CATEGORIES, UNGROUPED]
+    return order.filter((cat) => byCat.has(cat)).map((cat) => ({ label: cat, items: byCat.get(cat)! }))
+  }, [resources])
+
+  const crewGroups = useMemo(() => {
+    const employees = resources.filter((r) => r.type === 'employee')
+    const byDiv = new Map<string, Resource[]>()
+    for (const r of employees) {
+      const div = r.division || UNGROUPED
+      const list = byDiv.get(div)
+      if (list) list.push(r)
+      else byDiv.set(div, [r])
+    }
+    const order = [...EMPLOYEE_DIVISIONS, UNGROUPED] // Ufer, then LB Pork, then unassigned
+    return order.filter((div) => byDiv.has(div)).map((div) => ({ label: div, items: byDiv.get(div)! }))
+  }, [resources])
 
   function goTo(next: Screen) {
     setHistory((h) => [...h, screen])
@@ -219,7 +251,7 @@ export default function NewTaskModal({
 
   function nextAfterField() {
     if (isHauling) goTo('haul-dest-choice')
-    else goTo('crew')
+    else goTo('equipment')
   }
 
   function selectCommodity(c: HaulCommodity) {
@@ -253,7 +285,7 @@ export default function NewTaskModal({
     if (kind === 'bin') goTo('haul-dest-bin-site')
     else if (kind === 'elevator') goTo('haul-dest-elevator')
     else if (kind === 'other') goTo('haul-dest-other')
-    else goTo('crew')
+    else goTo('equipment')
   }
 
   function selectDestBinSite(site: string) {
@@ -263,18 +295,18 @@ export default function NewTaskModal({
       goTo('haul-dest-bin-number')
     } else {
       setDestBinNumber('')
-      goTo('crew')
+      goTo('equipment')
     }
   }
 
   function selectDestBinNumber(n: string) {
     setDestBinNumber(n)
-    goTo('crew')
+    goTo('equipment')
   }
 
   function selectElevator(name: string) {
     setDestElevator(name)
-    goTo('crew')
+    goTo('equipment')
   }
 
   async function handleCreateField() {
@@ -288,12 +320,12 @@ export default function NewTaskModal({
     }
   }
 
-  async function handleCreateResource() {
+  async function addResourceOfType(type: 'asset' | 'employee') {
     if (!newResName.trim()) return
     try {
       const r = await onAddResource({
         name: newResName.trim(),
-        type: newResKind,
+        type,
         shift_start: null,
         shift_end: null,
       })
@@ -542,7 +574,7 @@ export default function NewTaskModal({
             <StepNav
               onBack={goBack}
               onNext={nextAfterField}
-              nextLabel={isHauling ? 'Next: destination' : 'Next: crew'}
+              nextLabel={isHauling ? 'Next: destination' : 'Next: equipment'}
             />
           </div>
         )}
@@ -628,12 +660,12 @@ export default function NewTaskModal({
               placeholder="Describe the destination"
               style={{ ...inputStyle, marginBottom: '18px' }}
             />
-            <StepNav onBack={goBack} onNext={() => goTo('crew')} nextLabel="Next: crew" />
+            <StepNav onBack={goBack} onNext={() => goTo('equipment')} nextLabel="Next: equipment" />
           </div>
         )}
 
-        {/* Crew */}
-        {screen === 'crew' && (
+        {/* Equipment — grouped by category */}
+        {screen === 'equipment' && (
           <div>
             {groupsForType.length > 0 && (
               <>
@@ -658,95 +690,88 @@ export default function NewTaskModal({
                   })}
                 </div>
                 <div style={{ fontSize: '10px', color: '#4a5a3a', marginTop: '-8px', marginBottom: '14px' }}>
-                  Applying a team fills the crew below — add or remove individual resources afterward if needed.
+                  Applying a team fills equipment and crew — add or remove individual resources on either page afterward.
                 </div>
               </>
             )}
-            <Label>Assign resources</Label>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', maxHeight: '220px', overflowY: 'auto' }}>
-              {resources.map((r) => {
-                const status = resourceStatusNow(r, taskDate, now, tasksForDate)
-                const dayOff = !isDayAvailable(r, taskDate)
-                const picked = pickedResources.has(r.id)
-                return (
-                  <button
-                    key={r.id}
-                    onClick={() => toggleResource(r.id)}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '8px',
-                      padding: '6px 10px',
-                      borderRadius: '4px',
-                      cursor: 'pointer',
-                      textAlign: 'left',
-                      border: `1px solid ${picked ? C.greenText : C.border}`,
-                      background: picked ? '#1a2a1a' : 'transparent',
-                      color: C.text,
-                      fontSize: '13px',
-                    }}
-                  >
-                    <span
-                      style={{
-                        width: '14px',
-                        height: '14px',
-                        borderRadius: '3px',
-                        border: `1px solid ${picked ? C.greenText : C.border}`,
-                        background: picked ? C.greenText : 'transparent',
-                        color: C.bg,
-                        fontSize: '10px',
-                        lineHeight: '12px',
-                        textAlign: 'center',
-                        flexShrink: 0,
-                      }}
-                    >
-                      {picked ? '✓' : ''}
-                    </span>
-                    <span style={{ flex: 1 }}>
-                      <span style={{ fontSize: '10px', color: C.muted, marginRight: '5px', textTransform: 'uppercase' }}>
-                        {r.type === 'asset' ? 'A' : 'E'}
-                      </span>
-                      {r.name}
-                      {(r.category || r.division) && (
-                        <span style={{ color: C.mutedBright, fontSize: '11px', marginLeft: '6px' }}>
-                          {[r.division, r.category].filter(Boolean).join(' · ')}
-                        </span>
-                      )}
-                      <span style={{ color: C.muted, fontSize: '11px', marginLeft: '6px' }}>
-                        {formatShiftWindow(r.shift_start, r.shift_end)}
-                        {r.available_days && r.available_days.length > 0 && r.available_days.length < 7 && (
-                          <> · {formatAvailableDays(r.available_days)}</>
-                        )}
-                      </span>
-                    </span>
-                    {dayOff ? (
-                      <span style={{ fontSize: '10px', color: STATUS_COLOR['off-shift'] }}>not scheduled</span>
-                    ) : (
-                      isSameLocalDay(now, taskDate) &&
-                      status !== 'available' && (
-                        <span style={{ fontSize: '10px', color: STATUS_COLOR[status] }}>{status}</span>
-                      )
-                    )}
-                  </button>
-                )
-              })}
+            <Label>Equipment</Label>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', maxHeight: '260px', overflowY: 'auto' }}>
+              {equipmentGroups.length === 0 && (
+                <div style={{ fontSize: '12px', color: C.muted }}>No equipment yet — add one below.</div>
+              )}
+              {equipmentGroups.map((g) => (
+                <div key={g.label}>
+                  <div style={{ fontSize: '10px', letterSpacing: '0.1em', textTransform: 'uppercase', color: '#4a5a3a', marginBottom: '4px' }}>
+                    {g.label} ({g.items.length})
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                    {g.items.map((r) => (
+                      <ResourceOption
+                        key={r.id}
+                        r={r}
+                        picked={pickedResources.has(r.id)}
+                        onToggle={toggleResource}
+                        status={resourceStatusNow(r, taskDate, now, tasksForDate)}
+                        dayOff={!isDayAvailable(r, taskDate)}
+                        showStatus={isSameLocalDay(now, taskDate)}
+                      />
+                    ))}
+                  </div>
+                </div>
+              ))}
             </div>
             <div style={{ display: 'flex', gap: '6px', margin: '12px 0 18px' }}>
-              <select
-                value={newResKind}
-                onChange={(e) => setNewResKind(e.target.value as 'asset' | 'employee')}
-                style={{ ...inputStyle, width: '110px' }}
-              >
-                <option value="asset">Asset</option>
-                <option value="employee">Employee</option>
-              </select>
               <input
                 value={newResName}
                 onChange={(e) => setNewResName(e.target.value)}
-                placeholder="+ Add a resource"
+                placeholder="+ Add equipment"
                 style={inputStyle}
               />
-              <button onClick={handleCreateResource} style={ghostBtn}>
+              <button onClick={() => addResourceOfType('asset')} style={ghostBtn}>
+                Add
+              </button>
+            </div>
+            <StepNav onBack={goBack} onNext={() => goTo('employees')} nextLabel="Next: crew" />
+          </div>
+        )}
+
+        {/* Employees — grouped by division, Ufer before LB Pork */}
+        {screen === 'employees' && (
+          <div>
+            <Label>Crew</Label>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', maxHeight: '260px', overflowY: 'auto' }}>
+              {crewGroups.length === 0 && (
+                <div style={{ fontSize: '12px', color: C.muted }}>No employees yet — add one below.</div>
+              )}
+              {crewGroups.map((g) => (
+                <div key={g.label}>
+                  <div style={{ fontSize: '10px', letterSpacing: '0.1em', textTransform: 'uppercase', color: '#4a5a3a', marginBottom: '4px' }}>
+                    {g.label} ({g.items.length})
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                    {g.items.map((r) => (
+                      <ResourceOption
+                        key={r.id}
+                        r={r}
+                        picked={pickedResources.has(r.id)}
+                        onToggle={toggleResource}
+                        status={resourceStatusNow(r, taskDate, now, tasksForDate)}
+                        dayOff={!isDayAvailable(r, taskDate)}
+                        showStatus={isSameLocalDay(now, taskDate)}
+                      />
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div style={{ display: 'flex', gap: '6px', margin: '12px 0 18px' }}>
+              <input
+                value={newResName}
+                onChange={(e) => setNewResName(e.target.value)}
+                placeholder="+ Add an employee"
+                style={inputStyle}
+              />
+              <button onClick={() => addResourceOfType('employee')} style={ghostBtn}>
                 Add
               </button>
             </div>
@@ -849,6 +874,73 @@ function Label({ children }: { children: React.ReactNode }) {
     >
       {children}
     </div>
+  )
+}
+
+function ResourceOption({
+  r,
+  picked,
+  onToggle,
+  status,
+  dayOff,
+  showStatus,
+}: {
+  r: Resource
+  picked: boolean
+  onToggle: (id: string) => void
+  status: ResourceStatus
+  dayOff: boolean
+  showStatus: boolean
+}) {
+  return (
+    <button
+      onClick={() => onToggle(r.id)}
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: '8px',
+        padding: '6px 10px',
+        borderRadius: '4px',
+        cursor: 'pointer',
+        textAlign: 'left',
+        border: `1px solid ${picked ? C.greenText : C.border}`,
+        background: picked ? '#1a2a1a' : 'transparent',
+        color: C.text,
+        fontSize: '13px',
+      }}
+    >
+      <span
+        style={{
+          width: '14px',
+          height: '14px',
+          borderRadius: '3px',
+          border: `1px solid ${picked ? C.greenText : C.border}`,
+          background: picked ? C.greenText : 'transparent',
+          color: C.bg,
+          fontSize: '10px',
+          lineHeight: '12px',
+          textAlign: 'center',
+          flexShrink: 0,
+        }}
+      >
+        {picked ? '✓' : ''}
+      </span>
+      <span style={{ flex: 1 }}>
+        {r.name}
+        <span style={{ color: C.muted, fontSize: '11px', marginLeft: '6px' }}>
+          {formatShiftWindow(r.shift_start, r.shift_end)}
+          {r.available_days && r.available_days.length > 0 && r.available_days.length < 7 && (
+            <> · {formatAvailableDays(r.available_days)}</>
+          )}
+        </span>
+      </span>
+      {dayOff ? (
+        <span style={{ fontSize: '10px', color: STATUS_COLOR['off-shift'] }}>not scheduled</span>
+      ) : (
+        showStatus &&
+        status !== 'available' && <span style={{ fontSize: '10px', color: STATUS_COLOR[status] }}>{status}</span>
+      )}
+    </button>
   )
 }
 
