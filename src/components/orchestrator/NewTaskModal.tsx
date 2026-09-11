@@ -262,14 +262,26 @@ export default function NewTaskModal({
               <>
                 <Label>Saved crews</Label>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '14px' }}>
-                  {groupsForType.map((g) => (
-                    <button key={g.id} onClick={() => applyGroup(g)} style={ghostBtn}>
-                      {g.name}
-                      <span style={{ color: C.muted, marginLeft: '6px' }}>
-                        ({g.resource_ids.length})
-                      </span>
-                    </button>
-                  ))}
+                  {groupsForType.map((g) => {
+                    const memberNames = g.resource_ids
+                      .map((id) => resources.find((r) => r.id === id)?.name)
+                      .filter(Boolean)
+                      .join(', ')
+                    return (
+                      <button
+                        key={g.id}
+                        onClick={() => applyGroup(g)}
+                        title={memberNames || 'No members yet'}
+                        style={ghostBtn}
+                      >
+                        {g.name}
+                        <span style={{ color: C.muted, marginLeft: '6px' }}>({g.resource_ids.length})</span>
+                      </button>
+                    )
+                  })}
+                </div>
+                <div style={{ fontSize: '10px', color: '#4a5a3a', marginTop: '-8px', marginBottom: '14px' }}>
+                  Applying a team fills the crew below — add or remove individual resources afterward if needed.
                 </div>
               </>
             )}

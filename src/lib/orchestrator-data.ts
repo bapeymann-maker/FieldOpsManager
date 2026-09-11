@@ -247,6 +247,56 @@ export async function addManualField(name: string): Promise<OrchestratorField> {
   return data as OrchestratorField
 }
 
+// ── Default (saved) crews / "teams" ─────────────────────────────────────────
+
+export async function createDefaultGroup(
+  input: { task_type_id: string; name: string; shift_start: number | null; shift_end: number | null },
+  resourceIds: string[],
+): Promise<string> {
+  const c = orchestratorClient()
+  const { data, error } = await c.from('default_groups').insert(input).select('id').single()
+  if (error) throw error
+
+  const groupId = data.id as string
+  if (resourceIds.length) {
+    const { error: e2 } = await c
+      .from('default_group_resources')
+      .insert(resourceIds.map((rid) => ({ group_id: groupId, resource_id: rid })))
+    if (e2) throw e2
+  }
+  return groupId
+}
+
+/** Pass `resourceIds` to replace the team's membership; omit to leave it alone. */
+export async function updateDefaultGroup(
+  id: string,
+  patch: Partial<{ task_type_id: string; name: string; shift_start: number | null; shift_end: number | null }>,
+  resourceIds?: string[],
+): Promise<void> {
+  const c = orchestratorClient()
+  if (Object.keys(patch).length) {
+    const { error } = await c.from('default_groups').update(patch).eq('id', id)
+    if (error) throw error
+  }
+  if (resourceIds) {
+    const { error: delErr } = await c.from('default_group_resources').delete().eq('group_id', id)
+    if (delErr) throw delErr
+    if (resourceIds.length) {
+      const { error: insErr } = await c
+        .from('default_group_resources')
+        .insert(resourceIds.map((rid) => ({ group_id: id, resource_id: rid })))
+      if (insErr) throw insErr
+    }
+  }
+}
+
+/** Teams are just saved selections — deleting one never touches any task. */
+export async function deleteDefaultGroup(id: string): Promise<void> {
+  const c = orchestratorClient()
+  const { error } = await c.from('default_groups').delete().eq('id', id)
+  if (error) throw error
+}
+
 // ── Access check ──────────────────────────────────────────────────────────
 
 export type OrchestratorRole = 'owner' | 'admin' | 'manager'

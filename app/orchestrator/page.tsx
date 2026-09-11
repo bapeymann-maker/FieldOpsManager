@@ -18,7 +18,9 @@ import {
   type OrchestratorRole,
   addManualField,
   addManualResource,
+  createDefaultGroup,
   createTask,
+  deleteDefaultGroup,
   deleteTask,
   fetchLookups,
   fetchMyRole,
@@ -26,12 +28,14 @@ import {
   orchestratorClient,
   setTaskCompleted,
   subscribeToTasks,
+  updateDefaultGroup,
   updateResource,
 } from '@/lib/orchestrator-data'
 import type { ResourcePatch } from '@/components/orchestrator/ResourcePool'
 import DayTimeline from '@/components/orchestrator/DayTimeline'
 import WeekGrid from '@/components/orchestrator/WeekGrid'
 import ResourcePool from '@/components/orchestrator/ResourcePool'
+import TeamsPanel from '@/components/orchestrator/TeamsPanel'
 import NewTaskModal from '@/components/orchestrator/NewTaskModal'
 import { C } from '@/components/orchestrator/ui'
 
@@ -192,6 +196,38 @@ export default function OrchestratorPage() {
     return r
   }
 
+  // Teams change rarely and their membership is nested (default_group_resources),
+  // so a full lookups refetch is simpler and cheap here vs. patching local state.
+  async function refreshLookups() {
+    try {
+      setLookups(await fetchLookups())
+    } catch (e) {
+      setError(msg(e))
+    }
+  }
+
+  async function handleCreateGroup(
+    input: { task_type_id: string; name: string; shift_start: number | null; shift_end: number | null },
+    resourceIds: string[],
+  ) {
+    await createDefaultGroup(input, resourceIds)
+    await refreshLookups()
+  }
+
+  async function handleUpdateGroup(
+    id: string,
+    patch: { task_type_id: string; name: string; shift_start: number | null; shift_end: number | null },
+    resourceIds: string[],
+  ) {
+    await updateDefaultGroup(id, patch, resourceIds)
+    await refreshLookups()
+  }
+
+  async function handleDeleteGroup(id: string) {
+    await deleteDefaultGroup(id)
+    await refreshLookups()
+  }
+
   async function signOut() {
     await orchestratorClient().auth.signOut()
     router.push('/login')
@@ -317,6 +353,21 @@ export default function OrchestratorPage() {
             }}
             onUpdateResource={(id, patch) => {
               handleUpdateResource(id, patch).catch((e) => setError(msg(e)))
+            }}
+          />
+
+          <TeamsPanel
+            groups={lookups.defaultGroups}
+            taskTypes={lookups.taskTypes}
+            resources={lookups.resources}
+            onCreate={(input, resourceIds) => {
+              handleCreateGroup(input, resourceIds).catch((e) => setError(msg(e)))
+            }}
+            onUpdate={(id, patch, resourceIds) => {
+              handleUpdateGroup(id, patch, resourceIds).catch((e) => setError(msg(e)))
+            }}
+            onDelete={(id) => {
+              handleDeleteGroup(id).catch((e) => setError(msg(e)))
             }}
           />
         </div>
