@@ -34,8 +34,12 @@ do $$ begin
     check (source in ('gis','john_deere','manual'));
 exception when duplicate_object then null; end $$;
 
+-- Not partial: Postgres never treats two NULLs as equal, so a plain unique
+-- index already allows unlimited manually-added rows (external_id null) while
+-- still rejecting duplicate synced ids — and, unlike a partial index, it works
+-- as an ON CONFLICT (external_id) upsert target without repeating the WHERE.
 create unique index if not exists idx_fields_external
-  on fields(external_id) where external_id is not null;
+  on fields(external_id);
 
 -- ── Lookups ──────────────────────────────────────────────────────────────
 create table if not exists task_types (
@@ -62,8 +66,28 @@ create table if not exists resources (
   created_at     timestamptz not null default now()
 );
 
+-- Not partial — see the idx_fields_external comment above; same reasoning,
+-- and required for the sync-resources upsert's ON CONFLICT (external_id).
 create unique index if not exists idx_resources_external
-  on resources(external_id) where external_id is not null;
+  on resources(external_id);
+
+-- Weekdays a resource actually works, for part-time / certain-days-only
+-- workers: 0=Sunday..6=Saturday. null/empty means every day.
+alter table resources add column if not exists available_days smallint[];
+
+do $$ begin
+  alter table resources add constraint resources_available_days_check
+    check (available_days is null or available_days <@ array[0,1,2,3,4,5,6]::smallint[]);
+exception when duplicate_object then null; end $$;
+
+-- Free-text subgrouping (not DB-constrained, so new categories don't need a
+-- migration — the app's dropdown presets are the guardrail): equipment
+-- category for assets (Combine/Tractor/Cart/Semi/Trailer/Grain Cart/
+-- Implement), shift bucket for employees (Day Shift/Night Shift/Part-Time).
+alter table resources add column if not exists category text;
+-- Org unit, currently only meaningful for employees: Ufer / LB Pork
+-- (matches fields.client). Null for assets.
+alter table resources add column if not exists division text;
 
 -- ── Default (saved) crews, e.g. "Harvest 1 Day" ──────────────────────────
 create table if not exists default_groups (
@@ -97,6 +121,11 @@ create table if not exists tasks (
   created_at   timestamptz not null default now(),
   updated_at   timestamptz not null default now()
 );
+
+-- Generic bucket for task-type-specific structured data that doesn't warrant
+-- its own columns (currently: Hauling's commodity/origin/destination picks).
+-- Null for every other task type.
+alter table tasks add column if not exists details jsonb;
 
 create table if not exists task_resources (
   task_id     uuid not null references tasks(id)     on delete cascade,

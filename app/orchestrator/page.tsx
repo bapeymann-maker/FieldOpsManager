@@ -3,6 +3,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import {
+  type FieldSection,
   type NewTaskInput,
   type OrchestratorField,
   type Resource,
@@ -18,7 +19,9 @@ import {
   type OrchestratorRole,
   addManualField,
   addManualResource,
+  createDefaultGroup,
   createTask,
+  deleteDefaultGroup,
   deleteTask,
   fetchLookups,
   fetchMyRole,
@@ -26,10 +29,14 @@ import {
   orchestratorClient,
   setTaskCompleted,
   subscribeToTasks,
+  updateDefaultGroup,
+  updateResource,
 } from '@/lib/orchestrator-data'
+import type { ResourcePatch } from '@/components/orchestrator/ResourcePool'
 import DayTimeline from '@/components/orchestrator/DayTimeline'
 import WeekGrid from '@/components/orchestrator/WeekGrid'
 import ResourcePool from '@/components/orchestrator/ResourcePool'
+import TeamsPanel from '@/components/orchestrator/TeamsPanel'
 import NewTaskModal from '@/components/orchestrator/NewTaskModal'
 import { C } from '@/components/orchestrator/ui'
 
@@ -157,8 +164,21 @@ export default function OrchestratorPage() {
     await loadTasks()
   }
 
-  async function handleAddField(name: string): Promise<OrchestratorField> {
-    const f = await addManualField(name)
+  async function handleUpdateResource(id: string, patch: ResourcePatch): Promise<void> {
+    await updateResource(id, patch)
+    setLookups((prev) => {
+      if (!prev) return prev
+      // fetchLookups only returns active resources, so a deactivation drops
+      // the row from local state the same way a refetch would.
+      if (patch.active === false) {
+        return { ...prev, resources: prev.resources.filter((r) => r.id !== id) }
+      }
+      return { ...prev, resources: prev.resources.map((r) => (r.id === id ? { ...r, ...patch } : r)) }
+    })
+  }
+
+  async function handleAddField(name: string, section: FieldSection): Promise<OrchestratorField> {
+    const f = await addManualField(name, section)
     setLookups((prev) => (prev ? { ...prev, fields: [...prev.fields, f].sort((a, b) => a.name.localeCompare(b.name)) } : prev))
     return f
   }
@@ -168,10 +188,45 @@ export default function OrchestratorPage() {
     type: 'asset' | 'employee'
     shift_start: number | null
     shift_end: number | null
+    available_days?: number[] | null
+    category?: string | null
+    division?: string | null
   }): Promise<Resource> {
     const r = await addManualResource(input)
     setLookups((prev) => (prev ? { ...prev, resources: [...prev.resources, r] } : prev))
     return r
+  }
+
+  // Teams change rarely and their membership is nested (default_group_resources),
+  // so a full lookups refetch is simpler and cheap here vs. patching local state.
+  async function refreshLookups() {
+    try {
+      setLookups(await fetchLookups())
+    } catch (e) {
+      setError(msg(e))
+    }
+  }
+
+  async function handleCreateGroup(
+    input: { task_type_id: string; name: string; shift_start: number | null; shift_end: number | null },
+    resourceIds: string[],
+  ) {
+    await createDefaultGroup(input, resourceIds)
+    await refreshLookups()
+  }
+
+  async function handleUpdateGroup(
+    id: string,
+    patch: { task_type_id: string; name: string; shift_start: number | null; shift_end: number | null },
+    resourceIds: string[],
+  ) {
+    await updateDefaultGroup(id, patch, resourceIds)
+    await refreshLookups()
+  }
+
+  async function handleDeleteGroup(id: string) {
+    await deleteDefaultGroup(id)
+    await refreshLookups()
   }
 
   async function signOut() {
@@ -296,6 +351,24 @@ export default function OrchestratorPage() {
             now={now}
             onAddResource={(input) => {
               handleAddResource(input).catch((e) => setError(msg(e)))
+            }}
+            onUpdateResource={(id, patch) => {
+              handleUpdateResource(id, patch).catch((e) => setError(msg(e)))
+            }}
+          />
+
+          <TeamsPanel
+            groups={lookups.defaultGroups}
+            taskTypes={lookups.taskTypes}
+            resources={lookups.resources}
+            onCreate={(input, resourceIds) => {
+              handleCreateGroup(input, resourceIds).catch((e) => setError(msg(e)))
+            }}
+            onUpdate={(id, patch, resourceIds) => {
+              handleUpdateGroup(id, patch, resourceIds).catch((e) => setError(msg(e)))
+            }}
+            onDelete={(id) => {
+              handleDeleteGroup(id).catch((e) => setError(msg(e)))
             }}
           />
         </div>

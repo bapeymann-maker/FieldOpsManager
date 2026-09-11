@@ -9,6 +9,7 @@
 import { createBrowserClient } from '@supabase/ssr'
 import type {
   DefaultGroup,
+  FieldSection,
   NewTaskInput,
   OrchestratorField,
   Resource,
@@ -40,10 +41,12 @@ export async function fetchLookups(): Promise<Lookups> {
   const c = orchestratorClient()
   const [taskTypesRes, fieldsRes, resourcesRes, groupsRes] = await Promise.all([
     c.from('task_types').select('id, name').order('name'),
-    c.from('fields').select('id, name, active').order('name'),
+    c.from('fields').select('id, name, active, region, client').order('name'),
     c
       .from('resources')
-      .select('id, name, type, shift_start, shift_end, active, source, external_id')
+      .select(
+        'id, name, type, shift_start, shift_end, available_days, category, division, active, source, external_id',
+      )
       .order('type')
       .order('name'),
     c
@@ -90,6 +93,7 @@ function mapTaskRow(row: Record<string, unknown>): Task {
     resource_ids: ((row.task_resources as { resource_id: string }[] | null) ?? []).map(
       (r) => r.resource_id,
     ),
+    details: (row.details as Task['details']) ?? null,
   }
 }
 
@@ -192,26 +196,109 @@ export async function addManualResource(input: {
   type: 'asset' | 'employee'
   shift_start: number | null
   shift_end: number | null
+  available_days?: number[] | null
+  category?: string | null
+  division?: string | null
 }): Promise<Resource> {
   const c = orchestratorClient()
   const { data, error } = await c
     .from('resources')
-    .insert({ ...input, source: 'manual', external_id: null })
-    .select('id, name, type, shift_start, shift_end, active, source, external_id')
+    .insert({ available_days: null, category: null, division: null, ...input, source: 'manual', external_id: null })
+    .select(
+      'id, name, type, shift_start, shift_end, available_days, category, division, active, source, external_id',
+    )
     .single()
   if (error) throw error
   return data as Resource
 }
 
-export async function addManualField(name: string): Promise<OrchestratorField> {
+/**
+ * Edit a resource's name / type / shift window, or deactivate it.
+ * Deactivating (active: false) never deletes the row — a resource can be
+ * referenced by past task_resources rows, and `resources` is `on delete
+ * cascade` from `tasks`, so a hard delete would silently drop history off
+ * completed tasks. Same "deactivate, don't delete" pattern as the JD asset
+ * sync and the "Hide" flow on the main calendar.
+ */
+export async function updateResource(
+  id: string,
+  patch: Partial<{
+    name: string
+    type: 'asset' | 'employee'
+    shift_start: number | null
+    shift_end: number | null
+    available_days: number[] | null
+    category: string | null
+    division: string | null
+    active: boolean
+  }>,
+): Promise<void> {
   const c = orchestratorClient()
+  const { error } = await c.from('resources').update(patch).eq('id', id)
+  if (error) throw error
+}
+
+/** Section decides which of region / client the new field gets, so it shows up under itself immediately. */
+export async function addManualField(name: string, section: FieldSection): Promise<OrchestratorField> {
+  const c = orchestratorClient()
+  const placement = section === 'LB Pork' ? { client: 'LB Pork', region: null } : { region: section, client: null }
   const { data, error } = await c
     .from('fields')
-    .insert({ name, source: 'manual', external_id: null, active: true })
-    .select('id, name, active')
+    .insert({ name, source: 'manual', external_id: null, active: true, ...placement })
+    .select('id, name, active, region, client')
     .single()
   if (error) throw error
   return data as OrchestratorField
+}
+
+// ── Default (saved) crews / "teams" ─────────────────────────────────────────
+
+export async function createDefaultGroup(
+  input: { task_type_id: string; name: string; shift_start: number | null; shift_end: number | null },
+  resourceIds: string[],
+): Promise<string> {
+  const c = orchestratorClient()
+  const { data, error } = await c.from('default_groups').insert(input).select('id').single()
+  if (error) throw error
+
+  const groupId = data.id as string
+  if (resourceIds.length) {
+    const { error: e2 } = await c
+      .from('default_group_resources')
+      .insert(resourceIds.map((rid) => ({ group_id: groupId, resource_id: rid })))
+    if (e2) throw e2
+  }
+  return groupId
+}
+
+/** Pass `resourceIds` to replace the team's membership; omit to leave it alone. */
+export async function updateDefaultGroup(
+  id: string,
+  patch: Partial<{ task_type_id: string; name: string; shift_start: number | null; shift_end: number | null }>,
+  resourceIds?: string[],
+): Promise<void> {
+  const c = orchestratorClient()
+  if (Object.keys(patch).length) {
+    const { error } = await c.from('default_groups').update(patch).eq('id', id)
+    if (error) throw error
+  }
+  if (resourceIds) {
+    const { error: delErr } = await c.from('default_group_resources').delete().eq('group_id', id)
+    if (delErr) throw delErr
+    if (resourceIds.length) {
+      const { error: insErr } = await c
+        .from('default_group_resources')
+        .insert(resourceIds.map((rid) => ({ group_id: id, resource_id: rid })))
+      if (insErr) throw insErr
+    }
+  }
+}
+
+/** Teams are just saved selections — deleting one never touches any task. */
+export async function deleteDefaultGroup(id: string): Promise<void> {
+  const c = orchestratorClient()
+  const { error } = await c.from('default_groups').delete().eq('id', id)
+  if (error) throw error
 }
 
 // ── Access check ──────────────────────────────────────────────────────────

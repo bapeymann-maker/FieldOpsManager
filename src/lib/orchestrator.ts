@@ -5,7 +5,35 @@
 
 export type TaskType = { id: string; name: string }
 
-export type OrchestratorField = { id: string; name: string; active: boolean }
+export type OrchestratorField = {
+  id: string
+  name: string
+  active: boolean
+  region: string | null // 'North' | 'South' | ...
+  client: string | null // e.g. 'LB Pork'
+}
+
+// Mirrors the SECTIONS grouping on the main calendar (app/page.tsx) so the
+// orchestrator's field picker matches it exactly.
+export type FieldSection = 'North' | 'South' | 'LB Pork'
+
+export const FIELD_SECTIONS: { key: FieldSection; label: string }[] = [
+  { key: 'North', label: 'Northern Operation' },
+  { key: 'South', label: 'Southern Operation' },
+  { key: 'LB Pork', label: 'LB Pork' },
+]
+
+/** LB Pork wins regardless of region — same precedence as the main calendar's SECTIONS filters. */
+export function fieldSectionOf(f: Pick<OrchestratorField, 'region' | 'client'>): FieldSection | null {
+  if (f.client === 'LB Pork') return 'LB Pork'
+  if (f.region === 'North') return 'North'
+  if (f.region === 'South') return 'South'
+  return null
+}
+
+export function fieldsInSection(fields: OrchestratorField[], section: FieldSection): OrchestratorField[] {
+  return fields.filter((f) => fieldSectionOf(f) === section)
+}
 
 export type ResourceKind = 'asset' | 'employee'
 
@@ -15,10 +43,37 @@ export type Resource = {
   type: ResourceKind
   shift_start: number | null
   shift_end: number | null
+  // Weekdays this resource works at all: 0=Sunday..6=Saturday. null/empty
+  // means every day — for part-time / certain-days-only workers.
+  available_days: number[] | null
+  // Free-text subgrouping, meaning depends on `type`: equipment category for
+  // assets (Combine, Tractor, ...), shift bucket for employees (Day Shift,
+  // Night Shift, Part-Time). Presets live in ASSET_CATEGORIES / EMPLOYEE_SHIFTS
+  // below; not DB-constrained so new ones don't need a migration.
+  category: string | null
+  // Org unit — currently only meaningful for employees (Ufer / LB Pork,
+  // matching fields.client). Null for assets.
+  division: string | null
   active: boolean
   source: 'john_deere' | 'manual'
   external_id: string | null
 }
+
+export const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] as const
+
+export const ASSET_CATEGORIES = [
+  'Combine',
+  'Tractor',
+  'Cart',
+  'Semi',
+  'Trailer',
+  'Grain Cart',
+  'Implement',
+] as const
+
+export const EMPLOYEE_DIVISIONS = ['Ufer', 'LB Pork'] as const
+
+export const EMPLOYEE_SHIFTS = ['Day Shift', 'Night Shift', 'Part-Time'] as const
 
 export type DefaultGroup = {
   id: string
@@ -28,6 +83,11 @@ export type DefaultGroup = {
   shift_end: number | null
   resource_ids: string[]
 }
+
+// Generic, task-type-specific extra structured data (currently only Hauling
+// uses it, as HaulDetails below). Kept loosely typed here — validate/cast at
+// the point of use, keyed off task_type_id / task type name.
+export type TaskDetails = Record<string, unknown>
 
 export type Task = {
   id: string
@@ -41,6 +101,7 @@ export type Task = {
   completed: boolean
   completed_at: string | null
   resource_ids: string[]
+  details: TaskDetails | null
 }
 
 export type NewTaskInput = {
@@ -51,6 +112,71 @@ export type NewTaskInput = {
   start_hour: number
   end_hour: number
   all_day: boolean
+  details?: TaskDetails | null
+}
+
+// ── Hauling: origin/destination picker data ─────────────────────────────────
+
+export const HAUL_COMMODITIES = ['Corn', 'Soybeans', 'Oats'] as const
+export type HaulCommodity = (typeof HAUL_COMMODITIES)[number]
+
+// Bin sites and their individual bin numbers/letters. A site with an empty
+// `bins` array (Ben's) is itself the full answer — no number to pick.
+export const BIN_SITES: { site: string; bins: string[] }[] = [
+  { site: 'Home Farm', bins: ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', 'A', 'B'] },
+  { site: 'Mau', bins: ['41', '42', '43'] },
+  { site: "Ben's", bins: [] },
+  { site: 'Fancher', bins: ['31', '32', '33', '34', '35'] },
+  { site: "Ryan's", bins: ['20', '22', '23', '25'] },
+  { site: 'Danube', bins: ['D1', 'D2', 'D3', 'C1', 'C2', 'C3', 'C4', 'C5'] },
+  { site: 'Hanson Silo', bins: ['West', 'Middle', 'East'] },
+  { site: 'Fairfax', bins: ['1', '2', '3', '4'] },
+]
+
+export const ELEVATORS = [
+  'CHS Fairmont',
+  'Valero-Hartley',
+  'Dakota City Nebraska',
+  'Valero-Welcome',
+  'Cargill-Madison',
+  'Frontier Family Farms',
+  'FW COB',
+  'Grain Millers',
+  'LB Pork',
+  'Redwood Falls',
+] as const
+
+export type HaulLocation =
+  | { kind: 'field'; field_id: string | null }
+  | { kind: 'bin'; site: string; bin: string | null }
+  | { kind: 'home_farm_wet_bin' }
+  | { kind: 'lb_pork_delivery' }
+  | { kind: 'elevator'; name: string }
+  | { kind: 'other'; note: string }
+
+export type HaulDetails = {
+  commodity: HaulCommodity
+  origin: HaulLocation
+  destination: HaulLocation
+}
+
+export function formatHaulLocation(loc: HaulLocation, fields: OrchestratorField[]): string {
+  switch (loc.kind) {
+    case 'field': {
+      const f = loc.field_id ? fields.find((x) => x.id === loc.field_id) : null
+      return f ? f.name : 'Field'
+    }
+    case 'bin':
+      return loc.bin ? `${loc.site} ${loc.bin}` : loc.site
+    case 'home_farm_wet_bin':
+      return 'Home Farm Wet Bin'
+    case 'lb_pork_delivery':
+      return 'Delivery_LB_Pork'
+    case 'elevator':
+      return loc.name
+    case 'other':
+      return loc.note || 'Other'
+  }
 }
 
 // ── Availability (wrap-aware shift windows) ─────────────────────────────────
@@ -68,15 +194,31 @@ export function hourInWindow(h: number, start: number | null, end: number | null
   return hh >= start || hh < end // wraps past midnight
 }
 
+/** Is this resource scheduled to work at all on the weekday of `dateStr`? null/empty = every day. */
+export function isDayAvailable(resource: Pick<Resource, 'available_days'>, dateStr: string): boolean {
+  if (!resource.available_days || resource.available_days.length === 0) return true
+  const dow = parseDateStr(dateStr).getDay()
+  return resource.available_days.includes(dow)
+}
+
+export function formatAvailableDays(days: number[] | null): string {
+  if (!days || days.length === 0 || days.length >= 7) return 'Every day'
+  return [...days]
+    .sort((a, b) => a - b)
+    .map((d) => DAY_LABELS[d])
+    .join(', ')
+}
+
 /**
  * Event-range version of the same check: does any part of `task` fall outside
- * the resource's shift window? All-day tasks and always-available resources are
- * never "outside".
+ * the resource's day-of-week / shift window? All-day tasks skip the hour check
+ * (but not the day check); always-available resources are never "outside".
  */
 export function isOutsideAvailability(
-  resource: Pick<Resource, 'shift_start' | 'shift_end'>,
-  task: Pick<Task, 'start_hour' | 'end_hour' | 'all_day'>,
+  resource: Pick<Resource, 'shift_start' | 'shift_end' | 'available_days'>,
+  task: Pick<Task, 'start_hour' | 'end_hour' | 'all_day' | 'task_date'>,
 ): boolean {
+  if (!isDayAvailable(resource, task.task_date)) return true
   if (resource.shift_start == null || resource.shift_end == null) return false
   if (task.all_day) return false
   const step = 0.25
@@ -164,6 +306,7 @@ export function resourceStatusNow(
   now: Date,
   tasks: Task[],
 ): ResourceStatus {
+  if (!isDayAvailable(resource, dateStr)) return 'off-shift'
   const nowHour = now.getHours() + now.getMinutes() / 60
   const conflicts = findConflicts(tasks).get(resource.id)
   if (conflicts && conflicts.size) return 'conflict'
