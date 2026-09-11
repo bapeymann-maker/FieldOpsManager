@@ -318,6 +318,11 @@ export default function NewTaskModal({
                         {r.type === 'asset' ? 'A' : 'E'}
                       </span>
                       {r.name}
+                      {(r.category || r.division) && (
+                        <span style={{ color: C.mutedBright, fontSize: '11px', marginLeft: '6px' }}>
+                          {[r.division, r.category].filter(Boolean).join(' · ')}
+                        </span>
+                      )}
                       <span style={{ color: C.muted, fontSize: '11px', marginLeft: '6px' }}>
                         {formatShiftWindow(r.shift_start, r.shift_end)}
                         {r.available_days && r.available_days.length > 0 && r.available_days.length < 7 && (

@@ -18,12 +18,34 @@ export type Resource = {
   // Weekdays this resource works at all: 0=Sunday..6=Saturday. null/empty
   // means every day — for part-time / certain-days-only workers.
   available_days: number[] | null
+  // Free-text subgrouping, meaning depends on `type`: equipment category for
+  // assets (Combine, Tractor, ...), shift bucket for employees (Day Shift,
+  // Night Shift, Part-Time). Presets live in ASSET_CATEGORIES / EMPLOYEE_SHIFTS
+  // below; not DB-constrained so new ones don't need a migration.
+  category: string | null
+  // Org unit — currently only meaningful for employees (Ufer / LB Pork,
+  // matching fields.client). Null for assets.
+  division: string | null
   active: boolean
   source: 'john_deere' | 'manual'
   external_id: string | null
 }
 
 export const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] as const
+
+export const ASSET_CATEGORIES = [
+  'Combine',
+  'Tractor',
+  'Cart',
+  'Semi',
+  'Trailer',
+  'Grain Cart',
+  'Implement',
+] as const
+
+export const EMPLOYEE_DIVISIONS = ['Ufer', 'LB Pork'] as const
+
+export const EMPLOYEE_SHIFTS = ['Day Shift', 'Night Shift', 'Part-Time'] as const
 
 export type DefaultGroup = {
   id: string

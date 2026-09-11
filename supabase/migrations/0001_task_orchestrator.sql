@@ -80,6 +80,15 @@ do $$ begin
     check (available_days is null or available_days <@ array[0,1,2,3,4,5,6]::smallint[]);
 exception when duplicate_object then null; end $$;
 
+-- Free-text subgrouping (not DB-constrained, so new categories don't need a
+-- migration — the app's dropdown presets are the guardrail): equipment
+-- category for assets (Combine/Tractor/Cart/Semi/Trailer/Grain Cart/
+-- Implement), shift bucket for employees (Day Shift/Night Shift/Part-Time).
+alter table resources add column if not exists category text;
+-- Org unit, currently only meaningful for employees: Ufer / LB Pork
+-- (matches fields.client). Null for assets.
+alter table resources add column if not exists division text;
+
 -- ── Default (saved) crews, e.g. "Harvest 1 Day" ──────────────────────────
 create table if not exists default_groups (
   id           uuid primary key default gen_random_uuid(),
