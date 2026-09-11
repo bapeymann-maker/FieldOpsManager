@@ -3,11 +3,20 @@
 import React, { useMemo, useState } from 'react'
 import {
   type Resource,
+  type ResourceKind,
   type Task,
   formatShiftWindow,
   resourceStatusNow,
 } from '@/lib/orchestrator'
 import { C, STATUS_COLOR } from './ui'
+
+export type ResourcePatch = Partial<{
+  name: string
+  type: ResourceKind
+  shift_start: number | null
+  shift_end: number | null
+  active: boolean
+}>
 
 type Props = {
   resources: Resource[]
@@ -16,10 +25,11 @@ type Props = {
   now: Date
   onAddResource?: (input: {
     name: string
-    type: 'asset' | 'employee'
+    type: ResourceKind
     shift_start: number | null
     shift_end: number | null
   }) => void
+  onUpdateResource?: (id: string, patch: ResourcePatch) => void
 }
 
 const STATUS_LABEL: Record<string, string> = {
@@ -29,10 +39,19 @@ const STATUS_LABEL: Record<string, string> = {
   conflict: 'Double-booked',
 }
 
-export default function ResourcePool({ resources, tasks, dateStr, now, onAddResource }: Props) {
-  const [adding, setAdding] = useState(false)
+type PanelState = { mode: 'closed' } | { mode: 'add' } | { mode: 'edit'; resourceId: string }
+
+export default function ResourcePool({
+  resources,
+  tasks,
+  dateStr,
+  now,
+  onAddResource,
+  onUpdateResource,
+}: Props) {
+  const [panel, setPanel] = useState<PanelState>({ mode: 'closed' })
   const [name, setName] = useState('')
-  const [kind, setKind] = useState<'asset' | 'employee'>('asset')
+  const [kind, setKind] = useState<ResourceKind>('asset')
   const [shiftStart, setShiftStart] = useState('')
   const [shiftEnd, setShiftEnd] = useState('')
 
@@ -45,19 +64,54 @@ export default function ResourcePool({ resources, tasks, dateStr, now, onAddReso
     ]
   }, [resources])
 
-  function submitNew() {
-    if (!name.trim() || !onAddResource) return
-    onAddResource({
+  function openAdd() {
+    setName('')
+    setKind('asset')
+    setShiftStart('')
+    setShiftEnd('')
+    setPanel({ mode: 'add' })
+  }
+
+  function openEdit(r: Resource) {
+    if (!onUpdateResource) return
+    setName(r.name)
+    setKind(r.type)
+    setShiftStart(r.shift_start == null ? '' : String(r.shift_start))
+    setShiftEnd(r.shift_end == null ? '' : String(r.shift_end))
+    setPanel({ mode: 'edit', resourceId: r.id })
+  }
+
+  function closePanel() {
+    setPanel({ mode: 'closed' })
+  }
+
+  function submit() {
+    if (!name.trim()) return
+    const patch: ResourcePatch = {
       name: name.trim(),
       type: kind,
       shift_start: shiftStart === '' ? null : Number(shiftStart),
       shift_end: shiftEnd === '' ? null : Number(shiftEnd),
-    })
-    setName('')
-    setShiftStart('')
-    setShiftEnd('')
-    setAdding(false)
+    }
+    if (panel.mode === 'add' && onAddResource) {
+      onAddResource(patch as { name: string; type: ResourceKind; shift_start: number | null; shift_end: number | null })
+    } else if (panel.mode === 'edit' && onUpdateResource) {
+      onUpdateResource(panel.resourceId, patch)
+    }
+    closePanel()
   }
+
+  function deactivate() {
+    if (panel.mode !== 'edit' || !onUpdateResource) return
+    if (!confirm(`Deactivate ${name}? It won't be deleted — just hidden from the pool and pickers. Restore it directly in the database if needed.`)) {
+      return
+    }
+    onUpdateResource(panel.resourceId, { active: false })
+    closePanel()
+  }
+
+  const editing = panel.mode === 'edit'
+  const showForm = panel.mode !== 'closed'
 
   return (
     <div
@@ -89,7 +143,7 @@ export default function ResourcePool({ resources, tasks, dateStr, now, onAddReso
         </span>
         {onAddResource && (
           <button
-            onClick={() => setAdding((v) => !v)}
+            onClick={() => (showForm ? closePanel() : openAdd())}
             style={{
               background: 'none',
               border: `1px solid ${C.border}`,
@@ -100,13 +154,18 @@ export default function ResourcePool({ resources, tasks, dateStr, now, onAddReso
               padding: '3px 8px',
             }}
           >
-            {adding ? 'Cancel' : '+ Add'}
+            {showForm ? 'Cancel' : '+ Add'}
           </button>
         )}
       </div>
 
-      {adding && (
+      {showForm && (
         <div style={{ padding: '12px 14px', borderBottom: `1px solid ${C.border}`, display: 'grid', gap: '8px' }}>
+          {editing && (
+            <div style={{ fontSize: '11px', color: C.muted, textTransform: 'uppercase', letterSpacing: '0.1em' }}>
+              Editing
+            </div>
+          )}
           <input
             value={name}
             onChange={(e) => setName(e.target.value)}
@@ -151,10 +210,18 @@ export default function ResourcePool({ resources, tasks, dateStr, now, onAddReso
               inputMode="numeric"
               style={{ ...inputStyle, width: '70px' }}
             />
+            <span style={{ fontSize: '10px', color: '#4a5a3a' }}>0–23, blank = any time</span>
           </div>
-          <button onClick={submitNew} style={{ ...primaryBtn }}>
-            Add resource
-          </button>
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <button onClick={submit} style={{ ...primaryBtn, flex: 1 }}>
+              {editing ? 'Save changes' : 'Add resource'}
+            </button>
+            {editing && (
+              <button onClick={deactivate} style={dangerBtn}>
+                Deactivate
+              </button>
+            )}
+          </div>
         </div>
       )}
 
@@ -178,20 +245,27 @@ export default function ResourcePool({ resources, tasks, dateStr, now, onAddReso
               )}
               {g.items.map((r) => {
                 const status = resourceStatusNow(r, dateStr, now, tasks)
+                const isEditingThis = panel.mode === 'edit' && panel.resourceId === r.id
                 return (
-                  <div
+                  <button
                     key={r.id}
-                    title={`${STATUS_LABEL[status]} · ${formatShiftWindow(r.shift_start, r.shift_end)}`}
+                    onClick={() => openEdit(r)}
+                    title={
+                      onUpdateResource
+                        ? `Click to edit · ${STATUS_LABEL[status]} · ${formatShiftWindow(r.shift_start, r.shift_end)}`
+                        : `${STATUS_LABEL[status]} · ${formatShiftWindow(r.shift_start, r.shift_end)}`
+                    }
                     style={{
                       display: 'flex',
                       alignItems: 'center',
                       gap: '6px',
                       padding: '4px 9px',
                       borderRadius: '999px',
-                      border: `1px solid ${C.border}`,
-                      backgroundColor: C.panelAlt,
+                      border: `1px solid ${isEditingThis ? C.greenText : C.border}`,
+                      backgroundColor: isEditingThis ? '#1a2a1a' : C.panelAlt,
                       fontSize: '12px',
                       color: C.text,
+                      cursor: onUpdateResource ? 'pointer' : 'default',
                     }}
                   >
                     <span
@@ -207,7 +281,7 @@ export default function ResourcePool({ resources, tasks, dateStr, now, onAddReso
                     <span style={{ fontSize: '10px', color: C.muted }}>
                       {formatShiftWindow(r.shift_start, r.shift_end)}
                     </span>
-                  </div>
+                  </button>
                 )
               })}
             </div>
@@ -234,6 +308,16 @@ const primaryBtn: React.CSSProperties = {
   backgroundColor: C.green,
   border: 'none',
   color: '#fff',
+  borderRadius: '4px',
+  cursor: 'pointer',
+  fontSize: '12px',
+}
+
+const dangerBtn: React.CSSProperties = {
+  padding: '7px 12px',
+  backgroundColor: 'transparent',
+  border: `1px solid ${C.danger}`,
+  color: C.dangerText,
   borderRadius: '4px',
   cursor: 'pointer',
   fontSize: '12px',

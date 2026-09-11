@@ -203,6 +203,29 @@ export async function addManualResource(input: {
   return data as Resource
 }
 
+/**
+ * Edit a resource's name / type / shift window, or deactivate it.
+ * Deactivating (active: false) never deletes the row — a resource can be
+ * referenced by past task_resources rows, and `resources` is `on delete
+ * cascade` from `tasks`, so a hard delete would silently drop history off
+ * completed tasks. Same "deactivate, don't delete" pattern as the JD asset
+ * sync and the "Hide" flow on the main calendar.
+ */
+export async function updateResource(
+  id: string,
+  patch: Partial<{
+    name: string
+    type: 'asset' | 'employee'
+    shift_start: number | null
+    shift_end: number | null
+    active: boolean
+  }>,
+): Promise<void> {
+  const c = orchestratorClient()
+  const { error } = await c.from('resources').update(patch).eq('id', id)
+  if (error) throw error
+}
+
 export async function addManualField(name: string): Promise<OrchestratorField> {
   const c = orchestratorClient()
   const { data, error } = await c

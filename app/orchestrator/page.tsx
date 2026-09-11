@@ -26,7 +26,9 @@ import {
   orchestratorClient,
   setTaskCompleted,
   subscribeToTasks,
+  updateResource,
 } from '@/lib/orchestrator-data'
+import type { ResourcePatch } from '@/components/orchestrator/ResourcePool'
 import DayTimeline from '@/components/orchestrator/DayTimeline'
 import WeekGrid from '@/components/orchestrator/WeekGrid'
 import ResourcePool from '@/components/orchestrator/ResourcePool'
@@ -155,6 +157,19 @@ export default function OrchestratorPage() {
   async function handleCreate(input: NewTaskInput, resourceIds: string[]) {
     await createTask(input, resourceIds)
     await loadTasks()
+  }
+
+  async function handleUpdateResource(id: string, patch: ResourcePatch): Promise<void> {
+    await updateResource(id, patch)
+    setLookups((prev) => {
+      if (!prev) return prev
+      // fetchLookups only returns active resources, so a deactivation drops
+      // the row from local state the same way a refetch would.
+      if (patch.active === false) {
+        return { ...prev, resources: prev.resources.filter((r) => r.id !== id) }
+      }
+      return { ...prev, resources: prev.resources.map((r) => (r.id === id ? { ...r, ...patch } : r)) }
+    })
   }
 
   async function handleAddField(name: string): Promise<OrchestratorField> {
@@ -296,6 +311,9 @@ export default function OrchestratorPage() {
             now={now}
             onAddResource={(input) => {
               handleAddResource(input).catch((e) => setError(msg(e)))
+            }}
+            onUpdateResource={(id, patch) => {
+              handleUpdateResource(id, patch).catch((e) => setError(msg(e)))
             }}
           />
         </div>
