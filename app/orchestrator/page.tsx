@@ -27,6 +27,7 @@ import {
   fetchMyRole,
   fetchTasks,
   orchestratorClient,
+  setResourcePairings,
   setTaskCompleted,
   setTaskResources,
   subscribeToTasks,
@@ -41,6 +42,7 @@ import ResourcePool from '@/components/orchestrator/ResourcePool'
 import TeamsPanel from '@/components/orchestrator/TeamsPanel'
 import NewTaskModal from '@/components/orchestrator/NewTaskModal'
 import EditTaskModal from '@/components/orchestrator/EditTaskModal'
+import DailyReportModal from '@/components/orchestrator/DailyReportModal'
 import { C } from '@/components/orchestrator/ui'
 
 type View = 'day' | 'week'
@@ -60,6 +62,8 @@ export default function OrchestratorPage() {
   const [showNew, setShowNew] = useState(false)
   const [editingTask, setEditingTask] = useState<Task | null>(null)
   const [dayCursor, setDayCursor] = useState<DayCursor | null>(null)
+  const [showReport, setShowReport] = useState(false)
+  const [reportDate, setReportDate] = useState(() => toDateStr(new Date()))
 
   // Tick the scrub line / "now"-based status every 30s.
   useEffect(() => {
@@ -245,6 +249,11 @@ export default function OrchestratorPage() {
     await refreshLookups()
   }
 
+  async function handleSetPairings(resourceId: string, partnerIds: string[]) {
+    await setResourcePairings(resourceId, partnerIds)
+    await refreshLookups()
+  }
+
   async function signOut() {
     await orchestratorClient().auth.signOut()
     router.push('/login')
@@ -319,7 +328,16 @@ export default function OrchestratorPage() {
             : `Week of ${formatDateLong(startOfWeek(currentDate))}`}
         </span>
 
-        <button onClick={() => setShowNew(true)} style={{ ...navBtnStyle, marginLeft: 'auto', backgroundColor: C.green, color: '#fff', border: 'none' }}>
+        <button
+          onClick={() => {
+            setReportDate(currentDate)
+            setShowReport(true)
+          }}
+          style={{ ...navBtnStyle, marginLeft: 'auto' }}
+        >
+          Daily Report
+        </button>
+        <button onClick={() => setShowNew(true)} style={{ ...navBtnStyle, backgroundColor: C.green, color: '#fff', border: 'none' }}>
           + New Task
         </button>
       </div>
@@ -369,11 +387,15 @@ export default function OrchestratorPage() {
             dateStr={currentDate}
             now={now}
             cursor={currentView === 'day' ? dayCursor : null}
+            pairings={lookups.pairings}
             onAddResource={(input) => {
               handleAddResource(input).catch((e) => setError(msg(e)))
             }}
             onUpdateResource={(id, patch) => {
               handleUpdateResource(id, patch).catch((e) => setError(msg(e)))
+            }}
+            onSetPairings={(id, partnerIds) => {
+              handleSetPairings(id, partnerIds).catch((e) => setError(msg(e)))
             }}
           />
 
@@ -423,6 +445,18 @@ export default function OrchestratorPage() {
           onDelete={handleDelete}
           onAddField={handleAddField}
           onAddResource={handleAddResource}
+        />
+      )}
+
+      {showReport && lookups && (
+        <DailyReportModal
+          dateStr={reportDate}
+          taskTypes={lookups.taskTypes}
+          fields={lookups.fields}
+          resources={lookups.resources}
+          pairings={lookups.pairings}
+          onClose={() => setShowReport(false)}
+          onDateChange={setReportDate}
         />
       )}
 

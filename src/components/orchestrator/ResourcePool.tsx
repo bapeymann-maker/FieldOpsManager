@@ -8,11 +8,14 @@ import {
   EMPLOYEE_SHIFTS,
   type Resource,
   type ResourceKind,
+  type ResourcePairing,
   type Task,
+  canPair,
   formatAvailableDays,
   formatDateShort,
   formatHour,
   formatShiftWindow,
+  pairedWith,
   parseShiftHour,
   resourceStatusAt,
   resourceStatusNow,
@@ -48,8 +51,10 @@ type Props = {
   /** When set (Day view, from the timeline's scrub cursor), status reflects
    * this specific (day, hour) instead of live "now". */
   cursor?: { dateStr: string; hour: number } | null
+  pairings: ResourcePairing[]
   onAddResource?: (input: NewResourceInput) => void
   onUpdateResource?: (id: string, patch: ResourcePatch) => void
+  onSetPairings?: (resourceId: string, partnerIds: string[]) => void
 }
 
 const ALL_DAYS = new Set([0, 1, 2, 3, 4, 5, 6])
@@ -70,8 +75,10 @@ export default function ResourcePool({
   dateStr,
   now,
   cursor,
+  pairings,
   onAddResource,
   onUpdateResource,
+  onSetPairings,
 }: Props) {
   const [panel, setPanel] = useState<PanelState>({ mode: 'closed' })
   const [name, setName] = useState('')
@@ -82,6 +89,22 @@ export default function ResourcePool({
   const [category, setCategory] = useState('') // asset category
   const [division, setDivision] = useState('') // employee division
   const [shift, setShift] = useState('') // employee shift bucket (stored as category)
+  const [pairedIds, setPairedIds] = useState<Set<string>>(new Set())
+
+  const editingResource = panel.mode === 'edit' ? resources.find((r) => r.id === panel.resourceId) : undefined
+  const eligiblePartners = useMemo(
+    () => (editingResource ? resources.filter((r) => r.id !== editingResource.id && canPair(editingResource, r)) : []),
+    [editingResource, resources],
+  )
+
+  function togglePaired(id: string) {
+    setPairedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
 
   function toggleDay(d: number) {
     setDays((prev) => {
@@ -130,6 +153,7 @@ export default function ResourcePool({
     setCategory('')
     setDivision('')
     setShift('')
+    setPairedIds(new Set())
   }
 
   function openAdd() {
@@ -147,6 +171,7 @@ export default function ResourcePool({
     setCategory(r.type === 'asset' ? r.category ?? '' : '')
     setDivision(r.type === 'employee' ? r.division ?? '' : '')
     setShift(r.type === 'employee' ? r.category ?? '' : '')
+    setPairedIds(new Set(pairedWith(r, pairings)))
     setPanel({ mode: 'edit', resourceId: r.id })
   }
 
@@ -169,6 +194,7 @@ export default function ResourcePool({
       onAddResource(common)
     } else if (panel.mode === 'edit' && onUpdateResource) {
       onUpdateResource(panel.resourceId, common)
+      onSetPairings?.(panel.resourceId, [...pairedIds])
     }
     closePanel()
   }
@@ -400,6 +426,56 @@ export default function ResourcePool({
               ))}
             </div>
           </div>
+          {editing && editingResource && (
+            <div>
+              <div style={{ fontSize: '11px', color: C.muted, marginBottom: '4px' }}>
+                Paired with <span style={{ color: '#4a5a3a' }}>(default equipment/operator set for the daily report)</span>
+              </div>
+              {eligiblePartners.length === 0 ? (
+                <div style={{ fontSize: '11px', color: '#4a5a3a' }}>No eligible pairing partners yet.</div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', maxHeight: '140px', overflowY: 'auto' }}>
+                  {eligiblePartners.map((r) => (
+                    <button
+                      key={r.id}
+                      onClick={() => togglePaired(r.id)}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '8px',
+                        padding: '5px 9px',
+                        borderRadius: '4px',
+                        cursor: 'pointer',
+                        textAlign: 'left',
+                        border: `1px solid ${pairedIds.has(r.id) ? C.greenText : C.border}`,
+                        background: pairedIds.has(r.id) ? '#1a2a1a' : 'transparent',
+                        color: C.text,
+                        fontSize: '12px',
+                      }}
+                    >
+                      <span
+                        style={{
+                          width: '13px',
+                          height: '13px',
+                          borderRadius: '3px',
+                          border: `1px solid ${pairedIds.has(r.id) ? C.greenText : C.border}`,
+                          background: pairedIds.has(r.id) ? C.greenText : 'transparent',
+                          color: C.bg,
+                          fontSize: '9px',
+                          lineHeight: '11px',
+                          textAlign: 'center',
+                          flexShrink: 0,
+                        }}
+                      >
+                        {pairedIds.has(r.id) ? '✓' : ''}
+                      </span>
+                      {r.name}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
           <div style={{ display: 'flex', gap: '8px' }}>
             <button onClick={submit} style={{ ...primaryBtn, flex: 1 }}>
               {editing ? 'Save changes' : 'Add resource'}
