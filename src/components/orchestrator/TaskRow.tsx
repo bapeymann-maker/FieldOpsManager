@@ -6,6 +6,7 @@ import {
   type Resource,
   type Task,
   type TaskType,
+  formatDateShort,
   formatHour,
   isOutsideAvailability,
   taskSpan,
@@ -19,11 +20,16 @@ type Props = {
   resources: Resource[] // full pool, for name/shift lookup
   conflicted: boolean
   labelWidth: number
-  trackWidth: number
+  trackWidth: number // full width of the (possibly multi-day) hour track
+  hourWidth: number
+  dayOffsetPx: number // pixel offset of this task's own day within the track
+  showDate: boolean // multi-day view: show the task's date in the label
   onToggleComplete: (task: Task) => void
   onDelete: (task: Task) => void
   onSelect?: (task: Task) => void
 }
+
+const MIN_BAR_PX = 20
 
 export default function TaskRow({
   task,
@@ -33,13 +39,18 @@ export default function TaskRow({
   conflicted,
   labelWidth,
   trackWidth,
+  hourWidth,
+  dayOffsetPx,
+  showDate,
   onToggleComplete,
   onDelete,
   onSelect,
 }: Props) {
   const [start, end] = taskSpan(task)
-  const leftPct = (Math.min(start, 24) / 24) * 100
-  const widthPct = (Math.max(0, Math.min(end, 24) - Math.min(start, 24)) / 24) * 100
+  const clampedStart = Math.min(start, 24)
+  const clampedEnd = Math.min(end, 24)
+  const leftPx = dayOffsetPx + clampedStart * hourWidth
+  const widthPx = Math.max((clampedEnd - clampedStart) * hourWidth, MIN_BAR_PX)
   const color = taskTypeColor(taskType?.name)
 
   const assigned = task.resource_ids
@@ -113,6 +124,7 @@ export default function TaskRow({
           </span>
         </div>
         <div style={{ fontSize: '11px', color: C.muted, display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+          {showDate && <span style={{ color: C.mutedBright }}>{formatDateShort(task.task_date)}</span>}
           <span style={{ color }}>{taskType?.name ?? 'Task'}</span>
           {field && <span>· {field.name}</span>}
           <span>· {task.all_day ? 'All day' : `${formatHour(start)}–${formatHour(end)}`}</span>
@@ -150,18 +162,18 @@ export default function TaskRow({
         </div>
       </div>
 
-      {/* Bar track — fixed width matching the hour ruler above, not flex:1,
-          so percentage-based bar positions line up with the scrolled ruler.
-          Row height is 3x the old baseline so the label cell has room for
-          the full resource list above. */}
+      {/* Bar track — fixed width matching the ruler above (spans every day in
+          the window), not flex:1, so pixel-based bar positions line up with
+          the scrolled ruler. Row height is 3x the old baseline so the label
+          cell has room for the full resource list above. */}
       <div style={{ position: 'relative', width: trackWidth, flexShrink: 0, minHeight: '132px' }}>
         <div
           style={{
             position: 'absolute',
             top: '8px',
             bottom: '8px',
-            left: `${leftPct}%`,
-            width: `${Math.max(widthPct, 1.5)}%`,
+            left: `${leftPx}px`,
+            width: `${widthPx}px`,
             borderRadius: '4px',
             backgroundColor: task.completed ? '#2a3020' : color + '55',
             border: `1px solid ${conflicted ? '#ff6b6b' : color}`,
@@ -174,24 +186,27 @@ export default function TaskRow({
           <span style={{ fontSize: '10px', color: C.text, whiteSpace: 'nowrap' }}>
             {assigned.map((r) => r.name).join(', ') || '—'}
           </span>
+          <button
+            onClick={(e) => {
+              e.stopPropagation()
+              onDelete(task)
+            }}
+            title="Delete task"
+            style={{
+              marginLeft: 'auto',
+              background: 'none',
+              border: 'none',
+              color: C.text,
+              cursor: 'pointer',
+              fontSize: '12px',
+              lineHeight: 1,
+              flexShrink: 0,
+              padding: '0 0 0 4px',
+            }}
+          >
+            ✕
+          </button>
         </div>
-        <button
-          onClick={() => onDelete(task)}
-          title="Delete task"
-          style={{
-            position: 'absolute',
-            top: '6px',
-            right: '6px',
-            background: 'none',
-            border: 'none',
-            color: C.muted,
-            cursor: 'pointer',
-            fontSize: '13px',
-            lineHeight: 1,
-          }}
-        >
-          ✕
-        </button>
       </div>
     </div>
   )

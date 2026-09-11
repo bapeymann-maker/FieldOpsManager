@@ -332,22 +332,42 @@ export function resourceBusyAt(
 export type ResourceStatus = 'available' | 'busy' | 'off-shift' | 'conflict'
 
 /** Status of a resource "now" (for the resource pool chips). */
+/**
+ * Status of a resource at a specific (date, hour) — the general form, used to
+ * drive the Day view's scrub-cursor ("what's available at 2pm Thursday?").
+ */
+export function resourceStatusAt(
+  resource: Resource,
+  dateStr: string,
+  hour: number,
+  tasks: Task[],
+): ResourceStatus {
+  if (!isDayAvailable(resource, dateStr)) return 'off-shift'
+  const conflicts = findConflicts(tasks).get(resource.id)
+  if (conflicts && conflicts.size) return 'conflict'
+  if (resourceBusyAt(resource.id, dateStr, hour, tasks)) return 'busy'
+  if (!hourInWindow(hour, resource.shift_start, resource.shift_end)) return 'off-shift'
+  return 'available'
+}
+
+/**
+ * Status of a resource "right now" (wall-clock). Only evaluates busy/off-shift
+ * against the live hour when `dateStr` is actually today — viewing a future
+ * or past date with no cursor falls back to day-availability + conflict only,
+ * since "busy right now" isn't a meaningful question for a different day.
+ */
 export function resourceStatusNow(
   resource: Resource,
   dateStr: string,
   now: Date,
   tasks: Task[],
 ): ResourceStatus {
+  if (isSameLocalDay(now, dateStr)) {
+    return resourceStatusAt(resource, dateStr, now.getHours() + now.getMinutes() / 60, tasks)
+  }
   if (!isDayAvailable(resource, dateStr)) return 'off-shift'
-  const nowHour = now.getHours() + now.getMinutes() / 60
   const conflicts = findConflicts(tasks).get(resource.id)
   if (conflicts && conflicts.size) return 'conflict'
-  if (isSameLocalDay(now, dateStr) && resourceBusyAt(resource.id, dateStr, nowHour, tasks)) {
-    return 'busy'
-  }
-  if (isSameLocalDay(now, dateStr) && !hourInWindow(nowHour, resource.shift_start, resource.shift_end)) {
-    return 'off-shift'
-  }
   return 'available'
 }
 

@@ -10,8 +10,11 @@ import {
   type ResourceKind,
   type Task,
   formatAvailableDays,
+  formatDateShort,
+  formatHour,
   formatShiftWindow,
   parseShiftHour,
+  resourceStatusAt,
   resourceStatusNow,
 } from '@/lib/orchestrator'
 import { C, STATUS_COLOR } from './ui'
@@ -39,9 +42,12 @@ type NewResourceInput = {
 
 type Props = {
   resources: Resource[]
-  tasks: Task[] // tasks for the currently viewed date
+  tasks: Task[] // any tasks relevant to `dateStr` / `cursor` — status math filters by date internally
   dateStr: string
   now: Date
+  /** When set (Day view, from the timeline's scrub cursor), status reflects
+   * this specific (day, hour) instead of live "now". */
+  cursor?: { dateStr: string; hour: number } | null
   onAddResource?: (input: NewResourceInput) => void
   onUpdateResource?: (id: string, patch: ResourcePatch) => void
 }
@@ -63,6 +69,7 @@ export default function ResourcePool({
   tasks,
   dateStr,
   now,
+  cursor,
   onAddResource,
   onUpdateResource,
 }: Props) {
@@ -179,7 +186,9 @@ export default function ResourcePool({
   const showForm = panel.mode !== 'closed'
 
   function renderChip(r: Resource) {
-    const status = resourceStatusNow(r, dateStr, now, tasks)
+    const status = cursor
+      ? resourceStatusAt(r, cursor.dateStr, cursor.hour, tasks)
+      : resourceStatusNow(r, dateStr, now, tasks)
     const isEditingThis = panel.mode === 'edit' && panel.resourceId === r.id
     return (
       <button
@@ -240,15 +249,22 @@ export default function ResourcePool({
           justifyContent: 'space-between',
         }}
       >
-        <span
-          style={{
-            fontSize: '11px',
-            letterSpacing: '0.15em',
-            textTransform: 'uppercase',
-            color: C.muted,
-          }}
-        >
-          Resource Pool
+        <span style={{ display: 'flex', alignItems: 'baseline', gap: '10px', flexWrap: 'wrap' }}>
+          <span
+            style={{
+              fontSize: '11px',
+              letterSpacing: '0.15em',
+              textTransform: 'uppercase',
+              color: C.muted,
+            }}
+          >
+            Resource Pool
+          </span>
+          {cursor && (
+            <span style={{ fontSize: '11px', color: C.greenText }}>
+              at {formatDateShort(cursor.dateStr)} {formatHour(cursor.hour)}
+            </span>
+          )}
         </span>
         {onAddResource && (
           <button
