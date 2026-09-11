@@ -1,0 +1,247 @@
+// Task Orchestrator — framework-agnostic scheduling logic + types.
+// Pure functions only: no DOM, no React, no Supabase. Ported from the prototype.
+
+// ── Types ──────────────────────────────────────────────────────────────────
+
+export type TaskType = { id: string; name: string }
+
+export type OrchestratorField = { id: string; name: string; active: boolean }
+
+export type ResourceKind = 'asset' | 'employee'
+
+export type Resource = {
+  id: string
+  name: string
+  type: ResourceKind
+  shift_start: number | null
+  shift_end: number | null
+  active: boolean
+  source: 'john_deere' | 'manual'
+  external_id: string | null
+}
+
+export type DefaultGroup = {
+  id: string
+  task_type_id: string
+  name: string
+  shift_start: number | null
+  shift_end: number | null
+  resource_ids: string[]
+}
+
+export type Task = {
+  id: string
+  title: string
+  task_type_id: string
+  field_id: string | null
+  task_date: string // 'YYYY-MM-DD'
+  start_hour: number // may exceed 24 when the task crosses midnight
+  end_hour: number // may exceed 24
+  all_day: boolean
+  completed: boolean
+  completed_at: string | null
+  resource_ids: string[]
+}
+
+export type NewTaskInput = {
+  title: string
+  task_type_id: string
+  field_id: string | null
+  task_date: string
+  start_hour: number
+  end_hour: number
+  all_day: boolean
+}
+
+// ── Availability (wrap-aware shift windows) ─────────────────────────────────
+
+/**
+ * Is hour `h` (0-24, fractional ok) inside the [start, end) shift window?
+ * `null` start or end means the resource is always available.
+ * `end < start` means the window wraps past midnight (e.g. 20 -> 4).
+ */
+export function hourInWindow(h: number, start: number | null, end: number | null): boolean {
+  if (start == null || end == null) return true
+  const hh = ((h % 24) + 24) % 24
+  if (start === end) return true // full-day window
+  if (start < end) return hh >= start && hh < end
+  return hh >= start || hh < end // wraps past midnight
+}
+
+/**
+ * Event-range version of the same check: does any part of `task` fall outside
+ * the resource's shift window? All-day tasks and always-available resources are
+ * never "outside".
+ */
+export function isOutsideAvailability(
+  resource: Pick<Resource, 'shift_start' | 'shift_end'>,
+  task: Pick<Task, 'start_hour' | 'end_hour' | 'all_day'>,
+): boolean {
+  if (resource.shift_start == null || resource.shift_end == null) return false
+  if (task.all_day) return false
+  const step = 0.25
+  for (let h = task.start_hour; h < task.end_hour - 1e-9; h += step) {
+    if (!hourInWindow(h, resource.shift_start, resource.shift_end)) return true
+  }
+  return false
+}
+
+// ── Time ranges & conflict detection ───────────────────────────────────────
+
+export function taskSpan(t: Pick<Task, 'start_hour' | 'end_hour' | 'all_day'>): [number, number] {
+  if (t.all_day) return [0, 24]
+  return [t.start_hour, t.end_hour]
+}
+
+export function rangesOverlap(aStart: number, aEnd: number, bStart: number, bEnd: number): boolean {
+  return aStart < bEnd && bStart < aEnd
+}
+
+/** Same day + overlapping time range. Completed tasks never conflict. */
+export function tasksOverlap(a: Task, b: Task): boolean {
+  if (a.id === b.id) return false
+  if (a.completed || b.completed) return false
+  if (a.task_date !== b.task_date) return false
+  const [as, ae] = taskSpan(a)
+  const [bs, be] = taskSpan(b)
+  return rangesOverlap(as, ae, bs, be)
+}
+
+/** resourceId -> set of task ids that double-book that resource. */
+export function findConflicts(tasks: Task[]): Map<string, Set<string>> {
+  const byResource = new Map<string, Task[]>()
+  for (const t of tasks) {
+    if (t.completed) continue
+    for (const rid of t.resource_ids) {
+      const list = byResource.get(rid)
+      if (list) list.push(t)
+      else byResource.set(rid, [t])
+    }
+  }
+  const conflicts = new Map<string, Set<string>>()
+  for (const [rid, list] of byResource) {
+    for (let i = 0; i < list.length; i++) {
+      for (let j = i + 1; j < list.length; j++) {
+        if (tasksOverlap(list[i], list[j])) {
+          const set = conflicts.get(rid) ?? new Set<string>()
+          set.add(list[i].id)
+          set.add(list[j].id)
+          conflicts.set(rid, set)
+        }
+      }
+    }
+  }
+  return conflicts
+}
+
+/** Flat set of every task id involved in at least one resource conflict. */
+export function conflictedTaskIds(tasks: Task[]): Set<string> {
+  const out = new Set<string>()
+  for (const ids of findConflicts(tasks).values()) for (const id of ids) out.add(id)
+  return out
+}
+
+/** Is `resourceId` on an active task covering `hour` on `dateStr`? */
+export function resourceBusyAt(
+  resourceId: string,
+  dateStr: string,
+  hour: number,
+  tasks: Task[],
+): boolean {
+  return tasks.some((t) => {
+    if (t.completed || t.task_date !== dateStr || !t.resource_ids.includes(resourceId)) return false
+    const [s, e] = taskSpan(t)
+    return hour >= s && hour < e
+  })
+}
+
+export type ResourceStatus = 'available' | 'busy' | 'off-shift' | 'conflict'
+
+/** Status of a resource "now" (for the resource pool chips). */
+export function resourceStatusNow(
+  resource: Resource,
+  dateStr: string,
+  now: Date,
+  tasks: Task[],
+): ResourceStatus {
+  const nowHour = now.getHours() + now.getMinutes() / 60
+  const conflicts = findConflicts(tasks).get(resource.id)
+  if (conflicts && conflicts.size) return 'conflict'
+  if (isSameLocalDay(now, dateStr) && resourceBusyAt(resource.id, dateStr, nowHour, tasks)) {
+    return 'busy'
+  }
+  if (isSameLocalDay(now, dateStr) && !hourInWindow(nowHour, resource.shift_start, resource.shift_end)) {
+    return 'off-shift'
+  }
+  return 'available'
+}
+
+// ── Scrub line (midnight-rollover: pure scroll-position math) ───────────────
+
+/** Day timeline: pixels from the top of the hour grid for "now". */
+export function scrubLineTop(now: Date, hourHeight: number, dayStartHour = 0): number {
+  const h = now.getHours() + now.getMinutes() / 60 + now.getSeconds() / 3600
+  return (h - dayStartHour) * hourHeight
+}
+
+/** Day timeline (horizontal track): fraction 0-1 across a 24h track for "now". */
+export function scrubLineFraction(now: Date): number {
+  return (now.getHours() * 3600 + now.getMinutes() * 60 + now.getSeconds()) / 86400
+}
+
+export function isSameLocalDay(now: Date, dateStr: string): boolean {
+  return toDateStr(now) === dateStr
+}
+
+// ── Date helpers ───────────────────────────────────────────────────────────
+
+export function toDateStr(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
+export function parseDateStr(dateStr: string): Date {
+  return new Date(dateStr + 'T12:00:00')
+}
+
+export function addDays(dateStr: string, n: number): string {
+  const d = parseDateStr(dateStr)
+  d.setDate(d.getDate() + n)
+  return toDateStr(d)
+}
+
+export function startOfWeek(dateStr: string): string {
+  const d = parseDateStr(dateStr)
+  return addDays(dateStr, -d.getDay()) // week starts Sunday, matching the rest of the app
+}
+
+export function weekDays(startDateStr: string): string[] {
+  return Array.from({ length: 7 }, (_, i) => addDays(startDateStr, i))
+}
+
+export function formatDateLong(dateStr: string): string {
+  return parseDateStr(dateStr).toLocaleDateString('en-US', {
+    weekday: 'long',
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  })
+}
+
+export function formatDateShort(dateStr: string): string {
+  return parseDateStr(dateStr).toLocaleDateString('en-US', { weekday: 'short', month: 'numeric', day: 'numeric' })
+}
+
+/** "8 AM", "1:30 PM", "12 AM" — accepts hours >= 24 (wraps). */
+export function formatHour(h: number): string {
+  const base = Math.floor(h)
+  const hh = ((base % 24) + 24) % 24
+  const mins = Math.round((h - base) * 60)
+  const ampm = hh < 12 ? 'AM' : 'PM'
+  const disp = hh % 12 === 0 ? 12 : hh % 12
+  return mins ? `${disp}:${String(mins).padStart(2, '0')} ${ampm}` : `${disp} ${ampm}`
+}
+
+export function formatShiftWindow(start: number | null, end: number | null): string {
+  if (start == null || end == null) return 'Any time'
+  return `${formatHour(start)}–${formatHour(end)}`
+}

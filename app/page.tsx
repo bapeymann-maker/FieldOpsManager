@@ -696,6 +696,7 @@ export default function Home() {
             <h1 style={{ fontSize: isMobile ? '20px' : '24px', fontWeight: 'normal', margin: 0, color: '#c8d4a0' }}>{isMobile ? 'Field Ops' : 'Activity Calendar'}</h1>
           </div>
           <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+            <button onClick={() => router.push('/orchestrator')} style={{ padding: isMobile ? '10px 14px' : '8px 14px', background: 'none', border: '1px solid #2a3020', color: '#8a9a6a', borderRadius: '4px', cursor: 'pointer', fontSize: isMobile ? '13px' : '12px' }}>Task Orchestrator</button>
             <button onClick={() => setShowModal(true)} style={{ padding: isMobile ? '10px 18px' : '8px 14px', backgroundColor: '#2d6a2d', border: 'none', color: '#fff', borderRadius: '4px', cursor: 'pointer', fontSize: isMobile ? '15px' : '12px' }}>+ Log</button>
             {isMobile ? (
               <button onClick={e => { e.stopPropagation(); setShowMenu(m => !m) }} style={{ padding: '10px 14px', background: 'none', border: '1px solid #2a3020', color: '#6b7a5a', borderRadius: '4px', cursor: 'pointer', fontSize: '18px', lineHeight: 1 }}>☰</button>
