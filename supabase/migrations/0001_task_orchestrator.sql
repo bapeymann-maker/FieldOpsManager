@@ -71,6 +71,15 @@ create table if not exists resources (
 create unique index if not exists idx_resources_external
   on resources(external_id);
 
+-- Weekdays a resource actually works, for part-time / certain-days-only
+-- workers: 0=Sunday..6=Saturday. null/empty means every day.
+alter table resources add column if not exists available_days smallint[];
+
+do $$ begin
+  alter table resources add constraint resources_available_days_check
+    check (available_days is null or available_days <@ array[0,1,2,3,4,5,6]::smallint[]);
+exception when duplicate_object then null; end $$;
+
 -- ── Default (saved) crews, e.g. "Harvest 1 Day" ──────────────────────────
 create table if not exists default_groups (
   id           uuid primary key default gen_random_uuid(),

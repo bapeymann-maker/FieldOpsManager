@@ -10,6 +10,8 @@ import {
   type TaskType,
   formatHour,
   formatShiftWindow,
+  formatAvailableDays,
+  isDayAvailable,
   isSameLocalDay,
   resourceStatusNow,
 } from '@/lib/orchestrator'
@@ -275,6 +277,7 @@ export default function NewTaskModal({
             <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', maxHeight: '220px', overflowY: 'auto' }}>
               {resources.map((r) => {
                 const status = resourceStatusNow(r, taskDate, now, tasksForDate)
+                const dayOff = !isDayAvailable(r, taskDate)
                 const picked = pickedResources.has(r.id)
                 return (
                   <button
@@ -317,12 +320,18 @@ export default function NewTaskModal({
                       {r.name}
                       <span style={{ color: C.muted, fontSize: '11px', marginLeft: '6px' }}>
                         {formatShiftWindow(r.shift_start, r.shift_end)}
+                        {r.available_days && r.available_days.length > 0 && r.available_days.length < 7 && (
+                          <> · {formatAvailableDays(r.available_days)}</>
+                        )}
                       </span>
                     </span>
-                    {isSameLocalDay(now, taskDate) && (
-                      <span style={{ fontSize: '10px', color: STATUS_COLOR[status] }}>
-                        {status === 'available' ? '' : status}
-                      </span>
+                    {dayOff ? (
+                      <span style={{ fontSize: '10px', color: STATUS_COLOR['off-shift'] }}>not scheduled</span>
+                    ) : (
+                      isSameLocalDay(now, taskDate) &&
+                      status !== 'available' && (
+                        <span style={{ fontSize: '10px', color: STATUS_COLOR[status] }}>{status}</span>
+                      )
                     )}
                   </button>
                 )

@@ -2,9 +2,11 @@
 
 import React, { useMemo, useState } from 'react'
 import {
+  DAY_LABELS,
   type Resource,
   type ResourceKind,
   type Task,
+  formatAvailableDays,
   formatShiftWindow,
   resourceStatusNow,
 } from '@/lib/orchestrator'
@@ -15,6 +17,7 @@ export type ResourcePatch = Partial<{
   type: ResourceKind
   shift_start: number | null
   shift_end: number | null
+  available_days: number[] | null
   active: boolean
 }>
 
@@ -28,9 +31,12 @@ type Props = {
     type: ResourceKind
     shift_start: number | null
     shift_end: number | null
+    available_days: number[] | null
   }) => void
   onUpdateResource?: (id: string, patch: ResourcePatch) => void
 }
+
+const ALL_DAYS = new Set([0, 1, 2, 3, 4, 5, 6])
 
 const STATUS_LABEL: Record<string, string> = {
   available: 'Available',
@@ -54,6 +60,16 @@ export default function ResourcePool({
   const [kind, setKind] = useState<ResourceKind>('asset')
   const [shiftStart, setShiftStart] = useState('')
   const [shiftEnd, setShiftEnd] = useState('')
+  const [days, setDays] = useState<Set<number>>(new Set(ALL_DAYS))
+
+  function toggleDay(d: number) {
+    setDays((prev) => {
+      const next = new Set(prev)
+      if (next.has(d)) next.delete(d)
+      else next.add(d)
+      return next.size === 0 ? prev : next // require at least one day — use Deactivate for "never"
+    })
+  }
 
   const groups = useMemo(() => {
     const assets = resources.filter((r) => r.type === 'asset')
@@ -69,6 +85,7 @@ export default function ResourcePool({
     setKind('asset')
     setShiftStart('')
     setShiftEnd('')
+    setDays(new Set(ALL_DAYS))
     setPanel({ mode: 'add' })
   }
 
@@ -78,6 +95,7 @@ export default function ResourcePool({
     setKind(r.type)
     setShiftStart(r.shift_start == null ? '' : String(r.shift_start))
     setShiftEnd(r.shift_end == null ? '' : String(r.shift_end))
+    setDays(r.available_days && r.available_days.length > 0 ? new Set(r.available_days) : new Set(ALL_DAYS))
     setPanel({ mode: 'edit', resourceId: r.id })
   }
 
@@ -87,16 +105,17 @@ export default function ResourcePool({
 
   function submit() {
     if (!name.trim()) return
-    const patch: ResourcePatch = {
+    const common = {
       name: name.trim(),
       type: kind,
       shift_start: shiftStart === '' ? null : Number(shiftStart),
       shift_end: shiftEnd === '' ? null : Number(shiftEnd),
+      available_days: days.size >= 7 ? null : [...days].sort((a, b) => a - b),
     }
     if (panel.mode === 'add' && onAddResource) {
-      onAddResource(patch as { name: string; type: ResourceKind; shift_start: number | null; shift_end: number | null })
+      onAddResource(common)
     } else if (panel.mode === 'edit' && onUpdateResource) {
-      onUpdateResource(panel.resourceId, patch)
+      onUpdateResource(panel.resourceId, common)
     }
     closePanel()
   }
@@ -212,6 +231,29 @@ export default function ResourcePool({
             />
             <span style={{ fontSize: '10px', color: '#4a5a3a' }}>0–23, blank = any time</span>
           </div>
+          <div>
+            <div style={{ fontSize: '11px', color: C.muted, marginBottom: '4px' }}>Days worked</div>
+            <div style={{ display: 'flex', gap: '4px' }}>
+              {DAY_LABELS.map((label, d) => (
+                <button
+                  key={d}
+                  onClick={() => toggleDay(d)}
+                  style={{
+                    flex: 1,
+                    padding: '5px 0',
+                    borderRadius: '4px',
+                    cursor: 'pointer',
+                    fontSize: '11px',
+                    border: `1px solid ${days.has(d) ? C.greenText : C.border}`,
+                    background: days.has(d) ? '#1a2a1a' : 'transparent',
+                    color: days.has(d) ? C.greenText : C.muted,
+                  }}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
           <div style={{ display: 'flex', gap: '8px' }}>
             <button onClick={submit} style={{ ...primaryBtn, flex: 1 }}>
               {editing ? 'Save changes' : 'Add resource'}
@@ -251,9 +293,8 @@ export default function ResourcePool({
                     key={r.id}
                     onClick={() => openEdit(r)}
                     title={
-                      onUpdateResource
-                        ? `Click to edit · ${STATUS_LABEL[status]} · ${formatShiftWindow(r.shift_start, r.shift_end)}`
-                        : `${STATUS_LABEL[status]} · ${formatShiftWindow(r.shift_start, r.shift_end)}`
+                      (onUpdateResource ? 'Click to edit · ' : '') +
+                      `${STATUS_LABEL[status]} · ${formatShiftWindow(r.shift_start, r.shift_end)} · ${formatAvailableDays(r.available_days)}`
                     }
                     style={{
                       display: 'flex',
@@ -280,6 +321,9 @@ export default function ResourcePool({
                     <span>{r.name}</span>
                     <span style={{ fontSize: '10px', color: C.muted }}>
                       {formatShiftWindow(r.shift_start, r.shift_end)}
+                      {r.available_days && r.available_days.length > 0 && r.available_days.length < 7 && (
+                        <> · {formatAvailableDays(r.available_days)}</>
+                      )}
                     </span>
                   </button>
                 )

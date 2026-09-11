@@ -43,7 +43,7 @@ export async function fetchLookups(): Promise<Lookups> {
     c.from('fields').select('id, name, active').order('name'),
     c
       .from('resources')
-      .select('id, name, type, shift_start, shift_end, active, source, external_id')
+      .select('id, name, type, shift_start, shift_end, available_days, active, source, external_id')
       .order('type')
       .order('name'),
     c
@@ -192,12 +192,13 @@ export async function addManualResource(input: {
   type: 'asset' | 'employee'
   shift_start: number | null
   shift_end: number | null
+  available_days?: number[] | null
 }): Promise<Resource> {
   const c = orchestratorClient()
   const { data, error } = await c
     .from('resources')
-    .insert({ ...input, source: 'manual', external_id: null })
-    .select('id, name, type, shift_start, shift_end, active, source, external_id')
+    .insert({ available_days: null, ...input, source: 'manual', external_id: null })
+    .select('id, name, type, shift_start, shift_end, available_days, active, source, external_id')
     .single()
   if (error) throw error
   return data as Resource
@@ -218,6 +219,7 @@ export async function updateResource(
     type: 'asset' | 'employee'
     shift_start: number | null
     shift_end: number | null
+    available_days: number[] | null
     active: boolean
   }>,
 ): Promise<void> {

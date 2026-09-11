@@ -15,10 +15,15 @@ export type Resource = {
   type: ResourceKind
   shift_start: number | null
   shift_end: number | null
+  // Weekdays this resource works at all: 0=Sunday..6=Saturday. null/empty
+  // means every day — for part-time / certain-days-only workers.
+  available_days: number[] | null
   active: boolean
   source: 'john_deere' | 'manual'
   external_id: string | null
 }
+
+export const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] as const
 
 export type DefaultGroup = {
   id: string
@@ -68,15 +73,31 @@ export function hourInWindow(h: number, start: number | null, end: number | null
   return hh >= start || hh < end // wraps past midnight
 }
 
+/** Is this resource scheduled to work at all on the weekday of `dateStr`? null/empty = every day. */
+export function isDayAvailable(resource: Pick<Resource, 'available_days'>, dateStr: string): boolean {
+  if (!resource.available_days || resource.available_days.length === 0) return true
+  const dow = parseDateStr(dateStr).getDay()
+  return resource.available_days.includes(dow)
+}
+
+export function formatAvailableDays(days: number[] | null): string {
+  if (!days || days.length === 0 || days.length >= 7) return 'Every day'
+  return [...days]
+    .sort((a, b) => a - b)
+    .map((d) => DAY_LABELS[d])
+    .join(', ')
+}
+
 /**
  * Event-range version of the same check: does any part of `task` fall outside
- * the resource's shift window? All-day tasks and always-available resources are
- * never "outside".
+ * the resource's day-of-week / shift window? All-day tasks skip the hour check
+ * (but not the day check); always-available resources are never "outside".
  */
 export function isOutsideAvailability(
-  resource: Pick<Resource, 'shift_start' | 'shift_end'>,
-  task: Pick<Task, 'start_hour' | 'end_hour' | 'all_day'>,
+  resource: Pick<Resource, 'shift_start' | 'shift_end' | 'available_days'>,
+  task: Pick<Task, 'start_hour' | 'end_hour' | 'all_day' | 'task_date'>,
 ): boolean {
+  if (!isDayAvailable(resource, task.task_date)) return true
   if (resource.shift_start == null || resource.shift_end == null) return false
   if (task.all_day) return false
   const step = 0.25
@@ -164,6 +185,7 @@ export function resourceStatusNow(
   now: Date,
   tasks: Task[],
 ): ResourceStatus {
+  if (!isDayAvailable(resource, dateStr)) return 'off-shift'
   const nowHour = now.getHours() + now.getMinutes() / 60
   const conflicts = findConflicts(tasks).get(resource.id)
   if (conflicts && conflicts.size) return 'conflict'

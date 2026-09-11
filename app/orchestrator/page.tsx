@@ -183,6 +183,7 @@ export default function OrchestratorPage() {
     type: 'asset' | 'employee'
     shift_start: number | null
     shift_end: number | null
+    available_days?: number[] | null
   }): Promise<Resource> {
     const r = await addManualResource(input)
     setLookups((prev) => (prev ? { ...prev, resources: [...prev.resources, r] } : prev))
