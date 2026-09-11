@@ -75,6 +75,38 @@ export const EMPLOYEE_DIVISIONS = ['Ufer', 'LB Pork'] as const
 
 export const EMPLOYEE_SHIFTS = ['Day Shift', 'Night Shift', 'Part-Time'] as const
 
+export type ResourceGroup = { label: string; items: Resource[] }
+
+const UNGROUPED = 'Other'
+
+/** Assets grouped by category, in ASSET_CATEGORIES order, "Other" last. */
+export function groupAssetsByCategory(resources: Resource[]): ResourceGroup[] {
+  const assets = resources.filter((r) => r.type === 'asset')
+  const byCat = new Map<string, Resource[]>()
+  for (const r of assets) {
+    const cat = r.category || UNGROUPED
+    const list = byCat.get(cat)
+    if (list) list.push(r)
+    else byCat.set(cat, [r])
+  }
+  const order = [...ASSET_CATEGORIES, UNGROUPED]
+  return order.filter((cat) => byCat.has(cat)).map((cat) => ({ label: cat, items: byCat.get(cat)! }))
+}
+
+/** Employees grouped by division — Ufer before LB Pork, "Other" (unassigned) last. */
+export function groupEmployeesByDivision(resources: Resource[]): ResourceGroup[] {
+  const employees = resources.filter((r) => r.type === 'employee')
+  const byDiv = new Map<string, Resource[]>()
+  for (const r of employees) {
+    const div = r.division || UNGROUPED
+    const list = byDiv.get(div)
+    if (list) list.push(r)
+    else byDiv.set(div, [r])
+  }
+  const order = [...EMPLOYEE_DIVISIONS, UNGROUPED]
+  return order.filter((div) => byDiv.has(div)).map((div) => ({ label: div, items: byDiv.get(div)! }))
+}
+
 export type DefaultGroup = {
   id: string
   task_type_id: string

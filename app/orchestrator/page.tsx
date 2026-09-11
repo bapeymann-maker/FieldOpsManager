@@ -28,9 +28,11 @@ import {
   fetchTasks,
   orchestratorClient,
   setTaskCompleted,
+  setTaskResources,
   subscribeToTasks,
   updateDefaultGroup,
   updateResource,
+  updateTask,
 } from '@/lib/orchestrator-data'
 import type { ResourcePatch } from '@/components/orchestrator/ResourcePool'
 import DayTimeline from '@/components/orchestrator/DayTimeline'
@@ -38,6 +40,7 @@ import WeekGrid from '@/components/orchestrator/WeekGrid'
 import ResourcePool from '@/components/orchestrator/ResourcePool'
 import TeamsPanel from '@/components/orchestrator/TeamsPanel'
 import NewTaskModal from '@/components/orchestrator/NewTaskModal'
+import EditTaskModal from '@/components/orchestrator/EditTaskModal'
 import { C } from '@/components/orchestrator/ui'
 
 type View = 'day' | 'week'
@@ -55,6 +58,7 @@ export default function OrchestratorPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [showNew, setShowNew] = useState(false)
+  const [editingTask, setEditingTask] = useState<Task | null>(null)
 
   // Tick the scrub line / "now"-based status every 30s.
   useEffect(() => {
@@ -161,6 +165,12 @@ export default function OrchestratorPage() {
 
   async function handleCreate(input: NewTaskInput, resourceIds: string[]) {
     await createTask(input, resourceIds)
+    await loadTasks()
+  }
+
+  async function handleSaveTask(taskId: string, patch: Partial<NewTaskInput>, resourceIds: string[]) {
+    await updateTask(taskId, patch)
+    await setTaskResources(taskId, resourceIds)
     await loadTasks()
   }
 
@@ -328,6 +338,7 @@ export default function OrchestratorPage() {
               resources={lookups.resources}
               onToggleComplete={handleToggleComplete}
               onDelete={handleDelete}
+              onSelect={setEditingTask}
             />
           ) : (
             <WeekGrid
@@ -341,6 +352,7 @@ export default function OrchestratorPage() {
                 setCurrentDate(d)
                 setCurrentView('day')
               }}
+              onSelectTask={setEditingTask}
             />
           )}
 
@@ -385,6 +397,22 @@ export default function OrchestratorPage() {
           tasksForDate={tasksForCurrentDate}
           onClose={() => setShowNew(false)}
           onCreate={handleCreate}
+          onAddField={handleAddField}
+          onAddResource={handleAddResource}
+        />
+      )}
+
+      {editingTask && lookups && (
+        <EditTaskModal
+          task={editingTask}
+          now={now}
+          taskTypes={lookups.taskTypes}
+          fields={lookups.fields}
+          resources={lookups.resources}
+          tasks={tasks}
+          onClose={() => setEditingTask(null)}
+          onSave={handleSaveTask}
+          onDelete={handleDelete}
           onAddField={handleAddField}
           onAddResource={handleAddResource}
         />
