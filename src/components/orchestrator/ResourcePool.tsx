@@ -11,6 +11,7 @@ import {
   type Task,
   formatAvailableDays,
   formatShiftWindow,
+  parseShiftHour,
   resourceStatusNow,
 } from '@/lib/orchestrator'
 import { C, STATUS_COLOR } from './ui'
@@ -151,8 +152,8 @@ export default function ResourcePool({
     const common: NewResourceInput = {
       name: name.trim(),
       type: kind,
-      shift_start: shiftStart === '' ? null : Number(shiftStart),
-      shift_end: shiftEnd === '' ? null : Number(shiftEnd),
+      shift_start: parseShiftHour(shiftStart),
+      shift_end: parseShiftHour(shiftEnd),
       available_days: days.size >= 7 ? null : [...days].sort((a, b) => a - b),
       category: kind === 'asset' ? category || null : shift || null,
       division: kind === 'employee' ? division || null : null,

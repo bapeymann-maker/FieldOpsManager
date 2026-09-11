@@ -1,7 +1,7 @@
 'use client'
 
 import React, { useMemo, useState } from 'react'
-import type { DefaultGroup, Resource, TaskType } from '@/lib/orchestrator'
+import { type DefaultGroup, type Resource, type TaskType, parseShiftHour } from '@/lib/orchestrator'
 import { C } from './ui'
 
 type GroupInput = {
@@ -75,8 +75,8 @@ export default function TeamsPanel({ groups, taskTypes, resources, onCreate, onU
     const input: GroupInput = {
       name: name.trim(),
       task_type_id: taskTypeId,
-      shift_start: shiftStart === '' ? null : Number(shiftStart),
-      shift_end: shiftEnd === '' ? null : Number(shiftEnd),
+      shift_start: parseShiftHour(shiftStart),
+      shift_end: parseShiftHour(shiftEnd),
     }
     const resourceIds = [...picked]
     if (panel.mode === 'add') onCreate(input, resourceIds)
