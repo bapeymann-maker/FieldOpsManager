@@ -98,10 +98,12 @@ export default function TaskRow({
             {task.completed ? '✓' : ''}
           </button>
           <span
+            title={onSelect ? 'Click to edit' : undefined}
             style={{
               fontSize: '13px',
               color: C.text,
               textDecoration: task.completed ? 'line-through' : 'none',
+              borderBottom: onSelect ? '1px dotted #4a5a3a' : 'none',
               whiteSpace: 'nowrap',
               overflow: 'hidden',
               textOverflow: 'ellipsis',
@@ -125,11 +127,34 @@ export default function TaskRow({
             )}
           </div>
         )}
+        {/* Full resource list — the row is tall enough now to spell these out
+            instead of relying on the bar's single truncated line. */}
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginTop: '4px' }}>
+          {assigned.length === 0 && <span style={{ fontSize: '10px', color: '#3a4a2a' }}>No resources assigned</span>}
+          {assigned.map((r) => (
+            <span
+              key={r.id}
+              style={{
+                fontSize: '10px',
+                padding: '1px 7px',
+                borderRadius: '999px',
+                border: `1px solid ${C.border}`,
+                backgroundColor: C.panelAlt,
+                color: C.text,
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {r.name}
+            </span>
+          ))}
+        </div>
       </div>
 
       {/* Bar track — fixed width matching the hour ruler above, not flex:1,
-          so percentage-based bar positions line up with the scrolled ruler */}
-      <div style={{ position: 'relative', width: trackWidth, flexShrink: 0, minHeight: '44px' }}>
+          so percentage-based bar positions line up with the scrolled ruler.
+          Row height is 3x the old baseline so the label cell has room for
+          the full resource list above. */}
+      <div style={{ position: 'relative', width: trackWidth, flexShrink: 0, minHeight: '132px' }}>
         <div
           style={{
             position: 'absolute',

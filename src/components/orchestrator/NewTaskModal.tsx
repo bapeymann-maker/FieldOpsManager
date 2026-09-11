@@ -2,10 +2,8 @@
 
 import React, { useMemo, useState } from 'react'
 import {
-  ASSET_CATEGORIES,
   BIN_SITES,
   ELEVATORS,
-  EMPLOYEE_DIVISIONS,
   FIELD_SECTIONS,
   HAUL_COMMODITIES,
   type DefaultGroup,
@@ -23,6 +21,8 @@ import {
   formatHour,
   formatShiftWindow,
   formatAvailableDays,
+  groupAssetsByCategory,
+  groupEmployeesByDivision,
   isDayAvailable,
   isSameLocalDay,
   resourceStatusNow,
@@ -143,32 +143,8 @@ export default function NewTaskModal({
   )
 
   // Equipment grouped by category; Crew grouped by division (Ufer before LB Pork).
-  const UNGROUPED = 'Other'
-  const equipmentGroups = useMemo(() => {
-    const assets = resources.filter((r) => r.type === 'asset')
-    const byCat = new Map<string, Resource[]>()
-    for (const r of assets) {
-      const cat = r.category || UNGROUPED
-      const list = byCat.get(cat)
-      if (list) list.push(r)
-      else byCat.set(cat, [r])
-    }
-    const order = [...ASSET_CATEGORIES, UNGROUPED]
-    return order.filter((cat) => byCat.has(cat)).map((cat) => ({ label: cat, items: byCat.get(cat)! }))
-  }, [resources])
-
-  const crewGroups = useMemo(() => {
-    const employees = resources.filter((r) => r.type === 'employee')
-    const byDiv = new Map<string, Resource[]>()
-    for (const r of employees) {
-      const div = r.division || UNGROUPED
-      const list = byDiv.get(div)
-      if (list) list.push(r)
-      else byDiv.set(div, [r])
-    }
-    const order = [...EMPLOYEE_DIVISIONS, UNGROUPED] // Ufer, then LB Pork, then unassigned
-    return order.filter((div) => byDiv.has(div)).map((div) => ({ label: div, items: byDiv.get(div)! }))
-  }, [resources])
+  const equipmentGroups = useMemo(() => groupAssetsByCategory(resources), [resources])
+  const crewGroups = useMemo(() => groupEmployeesByDivision(resources), [resources])
 
   function goTo(next: Screen) {
     setHistory((h) => [...h, screen])
@@ -861,7 +837,7 @@ export default function NewTaskModal({
   )
 }
 
-function Label({ children }: { children: React.ReactNode }) {
+export function Label({ children }: { children: React.ReactNode }) {
   return (
     <div
       style={{
@@ -877,7 +853,7 @@ function Label({ children }: { children: React.ReactNode }) {
   )
 }
 
-function ResourceOption({
+export function ResourceOption({
   r,
   picked,
   onToggle,
@@ -944,7 +920,7 @@ function ResourceOption({
   )
 }
 
-function choiceStyle(active: boolean): React.CSSProperties {
+export function choiceStyle(active: boolean): React.CSSProperties {
   return {
     padding: '8px 16px',
     borderRadius: '4px',
@@ -986,7 +962,7 @@ function errText(e: unknown): string {
   return 'Something went wrong.'
 }
 
-const inputStyle: React.CSSProperties = {
+export const inputStyle: React.CSSProperties = {
   width: '100%',
   padding: '8px 12px',
   backgroundColor: C.bg,
@@ -998,7 +974,7 @@ const inputStyle: React.CSSProperties = {
   boxSizing: 'border-box',
 }
 
-const primaryBtn: React.CSSProperties = {
+export const primaryBtn: React.CSSProperties = {
   padding: '8px 18px',
   backgroundColor: C.green,
   border: 'none',
@@ -1008,7 +984,7 @@ const primaryBtn: React.CSSProperties = {
   fontSize: '13px',
 }
 
-const ghostBtn: React.CSSProperties = {
+export const ghostBtn: React.CSSProperties = {
   padding: '8px 14px',
   background: 'none',
   border: `1px solid ${C.border}`,

@@ -189,6 +189,19 @@ export async function unassignResource(taskId: string, resourceId: string): Prom
   if (error) throw error
 }
 
+/** Replaces a task's full resource assignment set (used by the edit modal). */
+export async function setTaskResources(taskId: string, resourceIds: string[]): Promise<void> {
+  const c = orchestratorClient()
+  const { error: delErr } = await c.from('task_resources').delete().eq('task_id', taskId)
+  if (delErr) throw delErr
+  if (resourceIds.length) {
+    const { error: insErr } = await c
+      .from('task_resources')
+      .insert(resourceIds.map((rid) => ({ task_id: taskId, resource_id: rid })))
+    if (insErr) throw insErr
+  }
+}
+
 // ── Manual "add new" affordances (source = 'manual') ───────────────────────
 
 export async function addManualResource(input: {
