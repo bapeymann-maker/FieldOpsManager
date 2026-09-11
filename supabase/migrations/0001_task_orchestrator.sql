@@ -34,8 +34,12 @@ do $$ begin
     check (source in ('gis','john_deere','manual'));
 exception when duplicate_object then null; end $$;
 
+-- Not partial: Postgres never treats two NULLs as equal, so a plain unique
+-- index already allows unlimited manually-added rows (external_id null) while
+-- still rejecting duplicate synced ids — and, unlike a partial index, it works
+-- as an ON CONFLICT (external_id) upsert target without repeating the WHERE.
 create unique index if not exists idx_fields_external
-  on fields(external_id) where external_id is not null;
+  on fields(external_id);
 
 -- ── Lookups ──────────────────────────────────────────────────────────────
 create table if not exists task_types (
@@ -62,8 +66,10 @@ create table if not exists resources (
   created_at     timestamptz not null default now()
 );
 
+-- Not partial — see the idx_fields_external comment above; same reasoning,
+-- and required for the sync-resources upsert's ON CONFLICT (external_id).
 create unique index if not exists idx_resources_external
-  on resources(external_id) where external_id is not null;
+  on resources(external_id);
 
 -- ── Default (saved) crews, e.g. "Harvest 1 Day" ──────────────────────────
 create table if not exists default_groups (
