@@ -2,12 +2,15 @@
 
 import React, { useMemo, useState } from 'react'
 import {
+  FIELD_SECTIONS,
   type DefaultGroup,
+  type FieldSection,
   type NewTaskInput,
   type OrchestratorField,
   type Resource,
   type Task,
   type TaskType,
+  fieldsInSection,
   formatHour,
   formatShiftWindow,
   formatAvailableDays,
@@ -27,7 +30,7 @@ type Props = {
   tasksForDate: Task[]
   onClose: () => void
   onCreate: (input: NewTaskInput, resourceIds: string[]) => Promise<void>
-  onAddField: (name: string) => Promise<OrchestratorField>
+  onAddField: (name: string, section: FieldSection) => Promise<OrchestratorField>
   onAddResource: (input: {
     name: string
     type: 'asset' | 'employee'
@@ -53,6 +56,7 @@ export default function NewTaskModal({
 }: Props) {
   const [step, setStep] = useState(1)
   const [typeId, setTypeId] = useState('')
+  const [section, setSection] = useState<FieldSection | ''>('')
   const [fieldId, setFieldId] = useState('')
   const [pickedResources, setPickedResources] = useState<Set<string>>(new Set())
   const [title, setTitle] = useState('')
@@ -69,6 +73,10 @@ export default function NewTaskModal({
 
   const selectedType = taskTypes.find((t) => t.id === typeId)
   const selectedField = fields.find((f) => f.id === fieldId)
+  const fieldsForSection = useMemo(
+    () => (section ? fieldsInSection(fields, section) : []),
+    [fields, section],
+  )
   const groupsForType = useMemo(
     () => defaultGroups.filter((g) => g.task_type_id === typeId),
     [defaultGroups, typeId],
@@ -94,13 +102,19 @@ export default function NewTaskModal({
       const parts = [selectedType?.name, selectedField?.name].filter(Boolean)
       setTitle(parts.join(' — ') || 'New task')
     }
-    setStep(4)
+    setStep(5)
+  }
+
+  function selectSection(s: FieldSection) {
+    if (s !== section) setFieldId('') // clear a selection that no longer belongs to the shown list
+    setSection(s)
+    setStep(3)
   }
 
   async function handleCreateField() {
-    if (!newFieldName.trim()) return
+    if (!newFieldName.trim() || !section) return
     try {
-      const f = await onAddField(newFieldName.trim())
+      const f = await onAddField(newFieldName.trim(), section)
       setFieldId(f.id)
       setNewFieldName('')
     } catch (e) {
@@ -179,10 +193,10 @@ export default function NewTaskModal({
       >
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '4px' }}>
           <h2 style={{ margin: 0, fontSize: '19px', fontWeight: 'normal', color: C.heading }}>New Task</h2>
-          <span style={{ fontSize: '11px', color: C.muted }}>Step {step} of 4</span>
+          <span style={{ fontSize: '11px', color: C.muted }}>Step {step} of 5</span>
         </div>
         <div style={{ display: 'flex', gap: '4px', margin: '10px 0 20px' }}>
-          {[1, 2, 3, 4].map((s) => (
+          {[1, 2, 3, 4, 5].map((s) => (
             <div
               key={s}
               style={{
@@ -224,22 +238,56 @@ export default function NewTaskModal({
           </div>
         )}
 
-        {/* Step 2 — Field */}
+        {/* Step 2 — Section */}
         {step === 2 && (
           <div>
-            <Label>Field</Label>
+            <Label>Section</Label>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+              {FIELD_SECTIONS.map((s) => (
+                <button
+                  key={s.key}
+                  onClick={() => selectSection(s.key)}
+                  style={{
+                    padding: '8px 16px',
+                    borderRadius: '4px',
+                    cursor: 'pointer',
+                    fontSize: '13px',
+                    border: `1px solid ${section === s.key ? C.greenText : C.border}`,
+                    background: section === s.key ? '#1a2a1a' : 'transparent',
+                    color: section === s.key ? C.greenText : C.text,
+                  }}
+                >
+                  {s.label}
+                </button>
+              ))}
+            </div>
+            <div style={{ marginTop: '18px' }}>
+              <StepNav onBack={() => setStep(1)} onNext={() => section && setStep(3)} nextLabel="Next: field" />
+            </div>
+          </div>
+        )}
+
+        {/* Step 3 — Field */}
+        {step === 3 && (
+          <div>
+            <Label>Field {section && <span style={{ textTransform: 'none', letterSpacing: 0 }}>— {FIELD_SECTIONS.find((s) => s.key === section)?.label}</span>}</Label>
             <select
               value={fieldId}
               onChange={(e) => setFieldId(e.target.value)}
               style={{ ...inputStyle, marginBottom: '10px' }}
             >
               <option value="">No field / general</option>
-              {fields.map((f) => (
+              {fieldsForSection.map((f) => (
                 <option key={f.id} value={f.id}>
                   {f.name}
                 </option>
               ))}
             </select>
+            {fieldsForSection.length === 0 && (
+              <div style={{ fontSize: '11px', color: C.muted, marginBottom: '10px' }}>
+                No fields in this section yet — add one below.
+              </div>
+            )}
             <div style={{ display: 'flex', gap: '6px', marginBottom: '18px' }}>
               <input
                 value={newFieldName}
@@ -251,12 +299,12 @@ export default function NewTaskModal({
                 Add
               </button>
             </div>
-            <StepNav onBack={() => setStep(1)} onNext={() => setStep(3)} nextLabel="Next: crew" />
+            <StepNav onBack={() => setStep(2)} onNext={() => setStep(4)} nextLabel="Next: crew" />
           </div>
         )}
 
-        {/* Step 3 — Crew */}
-        {step === 3 && (
+        {/* Step 4 — Crew */}
+        {step === 4 && (
           <div>
             {groupsForType.length > 0 && (
               <>
@@ -373,12 +421,12 @@ export default function NewTaskModal({
                 Add
               </button>
             </div>
-            <StepNav onBack={() => setStep(2)} onNext={goToDetails} nextLabel="Next: details" />
+            <StepNav onBack={() => setStep(3)} onNext={goToDetails} nextLabel="Next: details" />
           </div>
         )}
 
-        {/* Step 4 — Name & time */}
-        {step === 4 && (
+        {/* Step 5 — Name & time */}
+        {step === 5 && (
           <div>
             <Label>Task name</Label>
             <input value={title} onChange={(e) => setTitle(e.target.value)} style={{ ...inputStyle, marginBottom: '14px' }} />
@@ -429,7 +477,7 @@ export default function NewTaskModal({
             {error && <div style={{ color: '#ff6b6b', fontSize: '13px', marginBottom: '12px' }}>{error}</div>}
 
             <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-              <button onClick={() => setStep(3)} style={ghostBtn}>
+              <button onClick={() => setStep(4)} style={ghostBtn}>
                 Back
               </button>
               <button onClick={submit} disabled={busy} style={primaryBtn}>
@@ -439,7 +487,7 @@ export default function NewTaskModal({
           </div>
         )}
 
-        {error && step !== 4 && (
+        {error && step !== 5 && (
           <div style={{ color: '#ff6b6b', fontSize: '13px', marginTop: '12px' }}>{error}</div>
         )}
 

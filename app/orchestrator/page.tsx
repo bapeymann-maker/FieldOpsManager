@@ -3,6 +3,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import {
+  type FieldSection,
   type NewTaskInput,
   type OrchestratorField,
   type Resource,
@@ -176,8 +177,8 @@ export default function OrchestratorPage() {
     })
   }
 
-  async function handleAddField(name: string): Promise<OrchestratorField> {
-    const f = await addManualField(name)
+  async function handleAddField(name: string, section: FieldSection): Promise<OrchestratorField> {
+    const f = await addManualField(name, section)
     setLookups((prev) => (prev ? { ...prev, fields: [...prev.fields, f].sort((a, b) => a.name.localeCompare(b.name)) } : prev))
     return f
   }

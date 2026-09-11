@@ -5,7 +5,35 @@
 
 export type TaskType = { id: string; name: string }
 
-export type OrchestratorField = { id: string; name: string; active: boolean }
+export type OrchestratorField = {
+  id: string
+  name: string
+  active: boolean
+  region: string | null // 'North' | 'South' | ...
+  client: string | null // e.g. 'LB Pork'
+}
+
+// Mirrors the SECTIONS grouping on the main calendar (app/page.tsx) so the
+// orchestrator's field picker matches it exactly.
+export type FieldSection = 'North' | 'South' | 'LB Pork'
+
+export const FIELD_SECTIONS: { key: FieldSection; label: string }[] = [
+  { key: 'North', label: 'Northern Operation' },
+  { key: 'South', label: 'Southern Operation' },
+  { key: 'LB Pork', label: 'LB Pork' },
+]
+
+/** LB Pork wins regardless of region — same precedence as the main calendar's SECTIONS filters. */
+export function fieldSectionOf(f: Pick<OrchestratorField, 'region' | 'client'>): FieldSection | null {
+  if (f.client === 'LB Pork') return 'LB Pork'
+  if (f.region === 'North') return 'North'
+  if (f.region === 'South') return 'South'
+  return null
+}
+
+export function fieldsInSection(fields: OrchestratorField[], section: FieldSection): OrchestratorField[] {
+  return fields.filter((f) => fieldSectionOf(f) === section)
+}
 
 export type ResourceKind = 'asset' | 'employee'
 

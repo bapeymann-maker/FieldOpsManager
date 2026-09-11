@@ -9,6 +9,7 @@
 import { createBrowserClient } from '@supabase/ssr'
 import type {
   DefaultGroup,
+  FieldSection,
   NewTaskInput,
   OrchestratorField,
   Resource,
@@ -40,7 +41,7 @@ export async function fetchLookups(): Promise<Lookups> {
   const c = orchestratorClient()
   const [taskTypesRes, fieldsRes, resourcesRes, groupsRes] = await Promise.all([
     c.from('task_types').select('id, name').order('name'),
-    c.from('fields').select('id, name, active').order('name'),
+    c.from('fields').select('id, name, active, region, client').order('name'),
     c
       .from('resources')
       .select(
@@ -236,12 +237,14 @@ export async function updateResource(
   if (error) throw error
 }
 
-export async function addManualField(name: string): Promise<OrchestratorField> {
+/** Section decides which of region / client the new field gets, so it shows up under itself immediately. */
+export async function addManualField(name: string, section: FieldSection): Promise<OrchestratorField> {
   const c = orchestratorClient()
+  const placement = section === 'LB Pork' ? { client: 'LB Pork', region: null } : { region: section, client: null }
   const { data, error } = await c
     .from('fields')
-    .insert({ name, source: 'manual', external_id: null, active: true })
-    .select('id, name, active')
+    .insert({ name, source: 'manual', external_id: null, active: true, ...placement })
+    .select('id, name, active, region, client')
     .single()
   if (error) throw error
   return data as OrchestratorField
