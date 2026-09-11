@@ -88,7 +88,6 @@ const UNGROUPED = 'Other'
  */
 export const TASK_TYPE_EQUIPMENT_CATEGORIES: Record<string, string[]> = {
   Hauling: ['Semi', 'Trailer'],
-  Harvest: ['Tractor', 'Grain Cart'],
 }
 
 export function equipmentCategoriesForTaskType(taskTypeName: string | undefined): string[] | null {
