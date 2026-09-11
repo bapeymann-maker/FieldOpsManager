@@ -122,6 +122,11 @@ create table if not exists tasks (
   updated_at   timestamptz not null default now()
 );
 
+-- Generic bucket for task-type-specific structured data that doesn't warrant
+-- its own columns (currently: Hauling's commodity/origin/destination picks).
+-- Null for every other task type.
+alter table tasks add column if not exists details jsonb;
+
 create table if not exists task_resources (
   task_id     uuid not null references tasks(id)     on delete cascade,
   resource_id uuid not null references resources(id) on delete cascade,

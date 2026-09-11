@@ -93,6 +93,7 @@ function mapTaskRow(row: Record<string, unknown>): Task {
     resource_ids: ((row.task_resources as { resource_id: string }[] | null) ?? []).map(
       (r) => r.resource_id,
     ),
+    details: (row.details as Task['details']) ?? null,
   }
 }
 

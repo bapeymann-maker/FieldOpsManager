@@ -84,6 +84,11 @@ export type DefaultGroup = {
   resource_ids: string[]
 }
 
+// Generic, task-type-specific extra structured data (currently only Hauling
+// uses it, as HaulDetails below). Kept loosely typed here — validate/cast at
+// the point of use, keyed off task_type_id / task type name.
+export type TaskDetails = Record<string, unknown>
+
 export type Task = {
   id: string
   title: string
@@ -96,6 +101,7 @@ export type Task = {
   completed: boolean
   completed_at: string | null
   resource_ids: string[]
+  details: TaskDetails | null
 }
 
 export type NewTaskInput = {
@@ -106,6 +112,71 @@ export type NewTaskInput = {
   start_hour: number
   end_hour: number
   all_day: boolean
+  details?: TaskDetails | null
+}
+
+// ── Hauling: origin/destination picker data ─────────────────────────────────
+
+export const HAUL_COMMODITIES = ['Corn', 'Soybeans', 'Oats'] as const
+export type HaulCommodity = (typeof HAUL_COMMODITIES)[number]
+
+// Bin sites and their individual bin numbers/letters. A site with an empty
+// `bins` array (Ben's) is itself the full answer — no number to pick.
+export const BIN_SITES: { site: string; bins: string[] }[] = [
+  { site: 'Home Farm', bins: ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', 'A', 'B'] },
+  { site: 'Mau', bins: ['41', '42', '43'] },
+  { site: "Ben's", bins: [] },
+  { site: 'Fancher', bins: ['31', '32', '33', '34', '35'] },
+  { site: "Ryan's", bins: ['20', '22', '23', '25'] },
+  { site: 'Danube', bins: ['D1', 'D2', 'D3', 'C1', 'C2', 'C3', 'C4', 'C5'] },
+  { site: 'Hanson Silo', bins: ['West', 'Middle', 'East'] },
+  { site: 'Fairfax', bins: ['1', '2', '3', '4'] },
+]
+
+export const ELEVATORS = [
+  'CHS Fairmont',
+  'Valero-Hartley',
+  'Dakota City Nebraska',
+  'Valero-Welcome',
+  'Cargill-Madison',
+  'Frontier Family Farms',
+  'FW COB',
+  'Grain Millers',
+  'LB Pork',
+  'Redwood Falls',
+] as const
+
+export type HaulLocation =
+  | { kind: 'field'; field_id: string | null }
+  | { kind: 'bin'; site: string; bin: string | null }
+  | { kind: 'home_farm_wet_bin' }
+  | { kind: 'lb_pork_delivery' }
+  | { kind: 'elevator'; name: string }
+  | { kind: 'other'; note: string }
+
+export type HaulDetails = {
+  commodity: HaulCommodity
+  origin: HaulLocation
+  destination: HaulLocation
+}
+
+export function formatHaulLocation(loc: HaulLocation, fields: OrchestratorField[]): string {
+  switch (loc.kind) {
+    case 'field': {
+      const f = loc.field_id ? fields.find((x) => x.id === loc.field_id) : null
+      return f ? f.name : 'Field'
+    }
+    case 'bin':
+      return loc.bin ? `${loc.site} ${loc.bin}` : loc.site
+    case 'home_farm_wet_bin':
+      return 'Home Farm Wet Bin'
+    case 'lb_pork_delivery':
+      return 'Delivery_LB_Pork'
+    case 'elevator':
+      return loc.name
+    case 'other':
+      return loc.note || 'Other'
+  }
 }
 
 // ── Availability (wrap-aware shift windows) ─────────────────────────────────

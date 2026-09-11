@@ -2,9 +2,15 @@
 
 import React, { useMemo, useState } from 'react'
 import {
+  BIN_SITES,
+  ELEVATORS,
   FIELD_SECTIONS,
+  HAUL_COMMODITIES,
   type DefaultGroup,
   type FieldSection,
+  type HaulCommodity,
+  type HaulDetails,
+  type HaulLocation,
   type NewTaskInput,
   type OrchestratorField,
   type Resource,
@@ -41,6 +47,42 @@ type Props = {
 
 const HOUR_OPTIONS = Array.from({ length: 49 }, (_, i) => i / 2) // 0, 0.5 ... 24
 
+type OriginKind = 'field' | 'bin'
+type DestKind = 'home_wet_bin' | 'lb_pork' | 'bin' | 'elevator' | 'other'
+
+type Screen =
+  | 'type'
+  | 'section'
+  | 'field'
+  | 'haul-commodity'
+  | 'haul-origin-choice'
+  | 'haul-origin-bin-site'
+  | 'haul-origin-bin-number'
+  | 'haul-dest-choice'
+  | 'haul-dest-bin-site'
+  | 'haul-dest-bin-number'
+  | 'haul-dest-elevator'
+  | 'haul-dest-other'
+  | 'crew'
+  | 'details'
+
+const SCREEN_LABELS: Record<Screen, string> = {
+  type: 'Task type',
+  section: 'Section',
+  field: 'Field',
+  'haul-commodity': 'Commodity',
+  'haul-origin-choice': 'Origin',
+  'haul-origin-bin-site': 'Origin bin',
+  'haul-origin-bin-number': 'Origin bin #',
+  'haul-dest-choice': 'Destination',
+  'haul-dest-bin-site': 'Destination bin',
+  'haul-dest-bin-number': 'Destination bin #',
+  'haul-dest-elevator': 'Elevator',
+  'haul-dest-other': 'Destination',
+  crew: 'Crew',
+  details: 'Details',
+}
+
 export default function NewTaskModal({
   dateStr,
   now,
@@ -54,7 +96,9 @@ export default function NewTaskModal({
   onAddField,
   onAddResource,
 }: Props) {
-  const [step, setStep] = useState(1)
+  const [screen, setScreen] = useState<Screen>('type')
+  const [history, setHistory] = useState<Screen[]>([])
+
   const [typeId, setTypeId] = useState('')
   const [section, setSection] = useState<FieldSection | ''>('')
   const [fieldId, setFieldId] = useState('')
@@ -71,8 +115,20 @@ export default function NewTaskModal({
   const [newResName, setNewResName] = useState('')
   const [newResKind, setNewResKind] = useState<'asset' | 'employee'>('asset')
 
+  // Hauling-only state
+  const [commodity, setCommodity] = useState<HaulCommodity | ''>('')
+  const [originKind, setOriginKind] = useState<OriginKind | ''>('')
+  const [originBinSite, setOriginBinSite] = useState('')
+  const [originBinNumber, setOriginBinNumber] = useState('')
+  const [destKind, setDestKind] = useState<DestKind | ''>('')
+  const [destBinSite, setDestBinSite] = useState('')
+  const [destBinNumber, setDestBinNumber] = useState('')
+  const [destElevator, setDestElevator] = useState('')
+  const [destOther, setDestOther] = useState('')
+
   const selectedType = taskTypes.find((t) => t.id === typeId)
   const selectedField = fields.find((f) => f.id === fieldId)
+  const isHauling = selectedType?.name === 'Hauling'
   const fieldsForSection = useMemo(
     () => (section ? fieldsInSection(fields, section) : []),
     [fields, section],
@@ -81,6 +137,19 @@ export default function NewTaskModal({
     () => defaultGroups.filter((g) => g.task_type_id === typeId),
     [defaultGroups, typeId],
   )
+
+  function goTo(next: Screen) {
+    setHistory((h) => [...h, screen])
+    setScreen(next)
+  }
+
+  function goBack() {
+    setHistory((h) => {
+      if (h.length === 0) return h
+      setScreen(h[h.length - 1])
+      return h.slice(0, -1)
+    })
+  }
 
   function toggleResource(id: string) {
     setPickedResources((prev) => {
@@ -97,18 +166,115 @@ export default function NewTaskModal({
     if (g.shift_end != null) setEndHour(g.shift_end < g.shift_start! ? g.shift_end + 24 : g.shift_end)
   }
 
-  function goToDetails() {
-    if (!title) {
-      const parts = [selectedType?.name, selectedField?.name].filter(Boolean)
-      setTitle(parts.join(' — ') || 'New task')
+  function originDescription(): string {
+    if (originKind === 'field') return selectedField?.name ?? 'Field'
+    if (originKind === 'bin') return originBinNumber ? `${originBinSite} ${originBinNumber}` : originBinSite
+    return ''
+  }
+
+  function destDescription(): string {
+    switch (destKind) {
+      case 'home_wet_bin':
+        return 'Home Farm Wet Bin'
+      case 'lb_pork':
+        return 'Delivery_LB_Pork'
+      case 'bin':
+        return destBinNumber ? `${destBinSite} ${destBinNumber}` : destBinSite
+      case 'elevator':
+        return destElevator
+      case 'other':
+        return destOther || 'Other'
+      default:
+        return ''
     }
-    setStep(5)
+  }
+
+  function enterDetails() {
+    if (!title) {
+      if (isHauling) {
+        const parts = [
+          commodity ? `${commodity} Haul` : 'Hauling',
+          originDescription() && `from ${originDescription()}`,
+          destDescription() && `to ${destDescription()}`,
+        ].filter(Boolean)
+        setTitle(parts.join(' ') || 'Hauling task')
+      } else {
+        const parts = [selectedType?.name, selectedField?.name].filter(Boolean)
+        setTitle(parts.join(' — ') || 'New task')
+      }
+    }
+    goTo('details')
+  }
+
+  function selectType(t: TaskType) {
+    setTypeId(t.id)
+    goTo(t.name === 'Hauling' ? 'haul-commodity' : 'section')
   }
 
   function selectSection(s: FieldSection) {
-    if (s !== section) setFieldId('') // clear a selection that no longer belongs to the shown list
+    if (s !== section) setFieldId('')
     setSection(s)
-    setStep(3)
+    goTo('field')
+  }
+
+  function nextAfterField() {
+    if (isHauling) goTo('haul-dest-choice')
+    else goTo('crew')
+  }
+
+  function selectCommodity(c: HaulCommodity) {
+    setCommodity(c)
+    goTo('haul-origin-choice')
+  }
+
+  function selectOriginChoice(kind: OriginKind) {
+    setOriginKind(kind)
+    goTo(kind === 'field' ? 'section' : 'haul-origin-bin-site')
+  }
+
+  function selectOriginBinSite(site: string) {
+    setOriginBinSite(site)
+    const s = BIN_SITES.find((b) => b.site === site)
+    if (s && s.bins.length > 0) {
+      goTo('haul-origin-bin-number')
+    } else {
+      setOriginBinNumber('')
+      goTo('haul-dest-choice')
+    }
+  }
+
+  function selectOriginBinNumber(n: string) {
+    setOriginBinNumber(n)
+    goTo('haul-dest-choice')
+  }
+
+  function selectDestChoice(kind: DestKind) {
+    setDestKind(kind)
+    if (kind === 'bin') goTo('haul-dest-bin-site')
+    else if (kind === 'elevator') goTo('haul-dest-elevator')
+    else if (kind === 'other') goTo('haul-dest-other')
+    else goTo('crew')
+  }
+
+  function selectDestBinSite(site: string) {
+    setDestBinSite(site)
+    const s = BIN_SITES.find((b) => b.site === site)
+    if (s && s.bins.length > 0) {
+      goTo('haul-dest-bin-number')
+    } else {
+      setDestBinNumber('')
+      goTo('crew')
+    }
+  }
+
+  function selectDestBinNumber(n: string) {
+    setDestBinNumber(n)
+    goTo('crew')
+  }
+
+  function selectElevator(name: string) {
+    setDestElevator(name)
+    goTo('crew')
   }
 
   async function handleCreateField() {
@@ -138,6 +304,25 @@ export default function NewTaskModal({
     }
   }
 
+  function buildHaulDetails(): HaulDetails | null {
+    if (!isHauling || !commodity || !originKind || !destKind) return null
+    const origin: HaulLocation =
+      originKind === 'field'
+        ? { kind: 'field', field_id: fieldId || null }
+        : { kind: 'bin', site: originBinSite, bin: originBinNumber || null }
+    const destination: HaulLocation =
+      destKind === 'home_wet_bin'
+        ? { kind: 'home_farm_wet_bin' }
+        : destKind === 'lb_pork'
+          ? { kind: 'lb_pork_delivery' }
+          : destKind === 'bin'
+            ? { kind: 'bin', site: destBinSite, bin: destBinNumber || null }
+            : destKind === 'elevator'
+              ? { kind: 'elevator', name: destElevator }
+              : { kind: 'other', note: destOther }
+    return { commodity, origin, destination }
+  }
+
   async function submit() {
     setError('')
     if (!typeId) return setError('Pick a task type.')
@@ -145,15 +330,17 @@ export default function NewTaskModal({
     if (!allDay && endHour <= startHour) return setError('End time must be after start time.')
     setBusy(true)
     try {
+      const haulDetails = buildHaulDetails()
       await onCreate(
         {
           title: title.trim(),
           task_type_id: typeId,
-          field_id: fieldId || null,
+          field_id: isHauling ? (originKind === 'field' ? fieldId || null : null) : fieldId || null,
           task_date: taskDate,
           start_hour: allDay ? 0 : startHour,
           end_hour: allDay ? 24 : endHour,
           all_day: allDay,
+          details: haulDetails,
         },
         [...pickedResources],
       )
@@ -163,6 +350,26 @@ export default function NewTaskModal({
       setBusy(false)
     }
   }
+
+  const binSiteButtons = (onPick: (site: string) => void, active: string) => (
+    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+      {BIN_SITES.map((b) => (
+        <button key={b.site} onClick={() => onPick(b.site)} style={choiceStyle(active === b.site)}>
+          {b.site}
+        </button>
+      ))}
+    </div>
+  )
+
+  const binNumberButtons = (site: string, onPick: (n: string) => void, active: string) => (
+    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+      {(BIN_SITES.find((b) => b.site === site)?.bins ?? []).map((n) => (
+        <button key={n} onClick={() => onPick(n)} style={choiceStyle(active === n)}>
+          {n}
+        </button>
+      ))}
+    </div>
+  )
 
   return (
     <div
@@ -193,44 +400,29 @@ export default function NewTaskModal({
       >
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '4px' }}>
           <h2 style={{ margin: 0, fontSize: '19px', fontWeight: 'normal', color: C.heading }}>New Task</h2>
-          <span style={{ fontSize: '11px', color: C.muted }}>Step {step} of 5</span>
+          <span style={{ fontSize: '11px', color: C.muted }}>{SCREEN_LABELS[screen]}</span>
         </div>
         <div style={{ display: 'flex', gap: '4px', margin: '10px 0 20px' }}>
-          {[1, 2, 3, 4, 5].map((s) => (
+          {Array.from({ length: Math.max(history.length + 1, 5) }).map((_, i) => (
             <div
-              key={s}
+              key={i}
               style={{
                 flex: 1,
                 height: '3px',
                 borderRadius: '2px',
-                backgroundColor: s <= step ? C.greenText : C.border,
+                backgroundColor: i <= history.length ? C.greenText : C.border,
               }}
             />
           ))}
         </div>
 
-        {/* Step 1 — Type */}
-        {step === 1 && (
+        {/* Type */}
+        {screen === 'type' && (
           <div>
             <Label>Task type</Label>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
               {taskTypes.map((t) => (
-                <button
-                  key={t.id}
-                  onClick={() => {
-                    setTypeId(t.id)
-                    setStep(2)
-                  }}
-                  style={{
-                    padding: '8px 16px',
-                    borderRadius: '4px',
-                    cursor: 'pointer',
-                    fontSize: '13px',
-                    border: `1px solid ${typeId === t.id ? C.greenText : C.border}`,
-                    background: typeId === t.id ? '#1a2a1a' : 'transparent',
-                    color: typeId === t.id ? C.greenText : C.text,
-                  }}
-                >
+                <button key={t.id} onClick={() => selectType(t)} style={choiceStyle(typeId === t.id)}>
                   {t.name}
                 </button>
               ))}
@@ -238,39 +430,87 @@ export default function NewTaskModal({
           </div>
         )}
 
-        {/* Step 2 — Section */}
-        {step === 2 && (
+        {/* Hauling — Commodity */}
+        {screen === 'haul-commodity' && (
+          <div>
+            <Label>What&apos;s being hauled?</Label>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+              {HAUL_COMMODITIES.map((c) => (
+                <button key={c} onClick={() => selectCommodity(c)} style={choiceStyle(commodity === c)}>
+                  {c}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Hauling — Origin choice */}
+        {screen === 'haul-origin-choice' && (
+          <div>
+            <Label>Hauling from</Label>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+              <button onClick={() => selectOriginChoice('field')} style={choiceStyle(originKind === 'field')}>
+                From Field
+              </button>
+              <button onClick={() => selectOriginChoice('bin')} style={choiceStyle(originKind === 'bin')}>
+                From Bin
+              </button>
+            </div>
+            <div style={{ marginTop: '18px' }}>
+              <StepNav onBack={goBack} onNext={() => {}} nextLabel="" hideNext />
+            </div>
+          </div>
+        )}
+
+        {/* Hauling — origin bin site / number (also reused for destination below) */}
+        {screen === 'haul-origin-bin-site' && (
+          <div>
+            <Label>Origin bin</Label>
+            {binSiteButtons(selectOriginBinSite, originBinSite)}
+            <div style={{ marginTop: '18px' }}>
+              <StepNav onBack={goBack} onNext={() => {}} nextLabel="" hideNext />
+            </div>
+          </div>
+        )}
+        {screen === 'haul-origin-bin-number' && (
+          <div>
+            <Label>{originBinSite} — bin #</Label>
+            {binNumberButtons(originBinSite, selectOriginBinNumber, originBinNumber)}
+            <div style={{ marginTop: '18px' }}>
+              <StepNav onBack={goBack} onNext={() => {}} nextLabel="" hideNext />
+            </div>
+          </div>
+        )}
+
+        {/* Section (shared: plain Field step, and Hauling's From-Field origin) */}
+        {screen === 'section' && (
           <div>
             <Label>Section</Label>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
               {FIELD_SECTIONS.map((s) => (
-                <button
-                  key={s.key}
-                  onClick={() => selectSection(s.key)}
-                  style={{
-                    padding: '8px 16px',
-                    borderRadius: '4px',
-                    cursor: 'pointer',
-                    fontSize: '13px',
-                    border: `1px solid ${section === s.key ? C.greenText : C.border}`,
-                    background: section === s.key ? '#1a2a1a' : 'transparent',
-                    color: section === s.key ? C.greenText : C.text,
-                  }}
-                >
+                <button key={s.key} onClick={() => selectSection(s.key)} style={choiceStyle(section === s.key)}>
                   {s.label}
                 </button>
               ))}
             </div>
             <div style={{ marginTop: '18px' }}>
-              <StepNav onBack={() => setStep(1)} onNext={() => section && setStep(3)} nextLabel="Next: field" />
+              <StepNav onBack={goBack} onNext={() => {}} nextLabel="" hideNext />
             </div>
           </div>
         )}
 
-        {/* Step 3 — Field */}
-        {step === 3 && (
+        {/* Field */}
+        {screen === 'field' && (
           <div>
-            <Label>Field {section && <span style={{ textTransform: 'none', letterSpacing: 0 }}>— {FIELD_SECTIONS.find((s) => s.key === section)?.label}</span>}</Label>
+            <Label>
+              Field
+              {section && (
+                <span style={{ textTransform: 'none', letterSpacing: 0 }}>
+                  {' '}
+                  — {FIELD_SECTIONS.find((s) => s.key === section)?.label}
+                </span>
+              )}
+            </Label>
             <select
               value={fieldId}
               onChange={(e) => setFieldId(e.target.value)}
@@ -299,12 +539,101 @@ export default function NewTaskModal({
                 Add
               </button>
             </div>
-            <StepNav onBack={() => setStep(2)} onNext={() => setStep(4)} nextLabel="Next: crew" />
+            <StepNav
+              onBack={goBack}
+              onNext={nextAfterField}
+              nextLabel={isHauling ? 'Next: destination' : 'Next: crew'}
+            />
           </div>
         )}
 
-        {/* Step 4 — Crew */}
-        {step === 4 && (
+        {/* Hauling — Destination choice (options depend on origin kind) */}
+        {screen === 'haul-dest-choice' && (
+          <div>
+            <Label>Destination</Label>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+              {originKind === 'field' ? (
+                <>
+                  <button onClick={() => selectDestChoice('home_wet_bin')} style={choiceStyle(destKind === 'home_wet_bin')}>
+                    Home Farm Wet Bin
+                  </button>
+                  <button onClick={() => selectDestChoice('lb_pork')} style={choiceStyle(destKind === 'lb_pork')}>
+                    Delivery_LB_Pork
+                  </button>
+                  <button onClick={() => selectDestChoice('bin')} style={choiceStyle(destKind === 'bin')}>
+                    Bin
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button onClick={() => selectDestChoice('bin')} style={choiceStyle(destKind === 'bin')}>
+                    Bin
+                  </button>
+                  <button onClick={() => selectDestChoice('elevator')} style={choiceStyle(destKind === 'elevator')}>
+                    Elevator Sale
+                  </button>
+                  <button onClick={() => selectDestChoice('other')} style={choiceStyle(destKind === 'other')}>
+                    Other
+                  </button>
+                </>
+              )}
+            </div>
+            <div style={{ marginTop: '18px' }}>
+              <StepNav onBack={goBack} onNext={() => {}} nextLabel="" hideNext />
+            </div>
+          </div>
+        )}
+
+        {screen === 'haul-dest-bin-site' && (
+          <div>
+            <Label>Destination bin</Label>
+            {binSiteButtons(selectDestBinSite, destBinSite)}
+            <div style={{ marginTop: '18px' }}>
+              <StepNav onBack={goBack} onNext={() => {}} nextLabel="" hideNext />
+            </div>
+          </div>
+        )}
+        {screen === 'haul-dest-bin-number' && (
+          <div>
+            <Label>{destBinSite} — bin #</Label>
+            {binNumberButtons(destBinSite, selectDestBinNumber, destBinNumber)}
+            <div style={{ marginTop: '18px' }}>
+              <StepNav onBack={goBack} onNext={() => {}} nextLabel="" hideNext />
+            </div>
+          </div>
+        )}
+
+        {screen === 'haul-dest-elevator' && (
+          <div>
+            <Label>Elevator</Label>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+              {ELEVATORS.map((e) => (
+                <button key={e} onClick={() => selectElevator(e)} style={choiceStyle(destElevator === e)}>
+                  {e}
+                </button>
+              ))}
+            </div>
+            <div style={{ marginTop: '18px' }}>
+              <StepNav onBack={goBack} onNext={() => {}} nextLabel="" hideNext />
+            </div>
+          </div>
+        )}
+
+        {screen === 'haul-dest-other' && (
+          <div>
+            <Label>Other destination</Label>
+            <input
+              value={destOther}
+              onChange={(e) => setDestOther(e.target.value)}
+              placeholder="Describe the destination"
+              style={{ ...inputStyle, marginBottom: '18px' }}
+            />
+            <StepNav onBack={goBack} onNext={() => goTo('crew')} nextLabel="Next: crew" />
+          </div>
+        )}
+
+        {/* Crew */}
+        {screen === 'crew' && (
           <div>
             {groupsForType.length > 0 && (
               <>
@@ -421,15 +750,21 @@ export default function NewTaskModal({
                 Add
               </button>
             </div>
-            <StepNav onBack={() => setStep(3)} onNext={goToDetails} nextLabel="Next: details" />
+            <StepNav onBack={goBack} onNext={enterDetails} nextLabel="Next: details" />
           </div>
         )}
 
-        {/* Step 5 — Name & time */}
-        {step === 5 && (
+        {/* Details */}
+        {screen === 'details' && (
           <div>
             <Label>Task name</Label>
             <input value={title} onChange={(e) => setTitle(e.target.value)} style={{ ...inputStyle, marginBottom: '14px' }} />
+
+            {isHauling && (originDescription() || destDescription()) && (
+              <div style={{ fontSize: '11px', color: C.mutedBright, marginBottom: '14px' }}>
+                {commodity} · {originDescription()} → {destDescription()}
+              </div>
+            )}
 
             <Label>Date</Label>
             <input
@@ -477,7 +812,7 @@ export default function NewTaskModal({
             {error && <div style={{ color: '#ff6b6b', fontSize: '13px', marginBottom: '12px' }}>{error}</div>}
 
             <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-              <button onClick={() => setStep(4)} style={ghostBtn}>
+              <button onClick={goBack} style={ghostBtn}>
                 Back
               </button>
               <button onClick={submit} disabled={busy} style={primaryBtn}>
@@ -487,7 +822,7 @@ export default function NewTaskModal({
           </div>
         )}
 
-        {error && step !== 5 && (
+        {error && screen !== 'details' && (
           <div style={{ color: '#ff6b6b', fontSize: '13px', marginTop: '12px' }}>{error}</div>
         )}
 
@@ -517,23 +852,39 @@ function Label({ children }: { children: React.ReactNode }) {
   )
 }
 
+function choiceStyle(active: boolean): React.CSSProperties {
+  return {
+    padding: '8px 16px',
+    borderRadius: '4px',
+    cursor: 'pointer',
+    fontSize: '13px',
+    border: `1px solid ${active ? C.greenText : C.border}`,
+    background: active ? '#1a2a1a' : 'transparent',
+    color: active ? C.greenText : C.text,
+  }
+}
+
 function StepNav({
   onBack,
   onNext,
   nextLabel,
+  hideNext,
 }: {
   onBack: () => void
   onNext: () => void
   nextLabel: string
+  hideNext?: boolean
 }) {
   return (
     <div style={{ display: 'flex', justifyContent: 'space-between' }}>
       <button onClick={onBack} style={ghostBtn}>
         Back
       </button>
-      <button onClick={onNext} style={primaryBtn}>
-        {nextLabel}
-      </button>
+      {!hideNext && (
+        <button onClick={onNext} style={primaryBtn}>
+          {nextLabel}
+        </button>
+      )}
     </div>
   )
 }
