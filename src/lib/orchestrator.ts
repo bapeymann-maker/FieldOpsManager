@@ -80,8 +80,34 @@ export type ResourceGroup = { label: string; items: Resource[] }
 const UNGROUPED = 'Other'
 
 /** Assets grouped by category, in ASSET_CATEGORIES order, "Other" last. */
-export function groupAssetsByCategory(resources: Resource[]): ResourceGroup[] {
-  const assets = resources.filter((r) => r.type === 'asset')
+/**
+ * Task types that only ever use a specific slice of equipment — the
+ * Equipment picker filters to just these categories (and drops the
+ * "Other/uncategorized" catch-all, since something uncategorized can't be
+ * confirmed to belong). Task types not listed here show every category.
+ */
+export const TASK_TYPE_EQUIPMENT_CATEGORIES: Record<string, string[]> = {
+  Hauling: ['Semi', 'Trailer'],
+  Harvest: ['Tractor', 'Grain Cart'],
+}
+
+export function equipmentCategoriesForTaskType(taskTypeName: string | undefined): string[] | null {
+  if (!taskTypeName) return null
+  return TASK_TYPE_EQUIPMENT_CATEGORIES[taskTypeName] ?? null
+}
+
+/**
+ * Assets grouped by category, in ASSET_CATEGORIES order, "Other" last.
+ * Pass `allowedCategories` (e.g. from equipmentCategoriesForTaskType) to
+ * restrict to just those categories, in the order given, with no "Other"
+ * bucket — used for task types that only ever use specific equipment.
+ */
+export function groupAssetsByCategory(resources: Resource[], allowedCategories?: string[] | null): ResourceGroup[] {
+  const assets = resources.filter((r) => {
+    if (r.type !== 'asset') return false
+    if (!allowedCategories) return true
+    return !!r.category && allowedCategories.includes(r.category)
+  })
   const byCat = new Map<string, Resource[]>()
   for (const r of assets) {
     const cat = r.category || UNGROUPED
@@ -89,7 +115,7 @@ export function groupAssetsByCategory(resources: Resource[]): ResourceGroup[] {
     if (list) list.push(r)
     else byCat.set(cat, [r])
   }
-  const order = [...ASSET_CATEGORIES, UNGROUPED]
+  const order = allowedCategories ?? [...ASSET_CATEGORIES, UNGROUPED]
   return order.filter((cat) => byCat.has(cat)).map((cat) => ({ label: cat, items: byCat.get(cat)! }))
 }
 

@@ -14,9 +14,11 @@ import {
   type NewTaskInput,
   type OrchestratorField,
   type Resource,
+  type ResourcePairing,
   type ResourceStatus,
   type Task,
   type TaskType,
+  equipmentCategoriesForTaskType,
   fieldsInSection,
   formatHour,
   formatShiftWindow,
@@ -25,6 +27,7 @@ import {
   groupEmployeesByDivision,
   isDayAvailable,
   isSameLocalDay,
+  pairedWith,
   resourceStatusNow,
 } from '@/lib/orchestrator'
 import { C, STATUS_COLOR } from './ui'
@@ -36,6 +39,7 @@ type Props = {
   fields: OrchestratorField[]
   resources: Resource[]
   defaultGroups: DefaultGroup[]
+  pairings: ResourcePairing[]
   tasksForDate: Task[]
   onClose: () => void
   onCreate: (input: NewTaskInput, resourceIds: string[]) => Promise<void>
@@ -45,6 +49,7 @@ type Props = {
     type: 'asset' | 'employee'
     shift_start: number | null
     shift_end: number | null
+    category?: string | null
   }) => Promise<Resource>
 }
 
@@ -95,6 +100,7 @@ export default function NewTaskModal({
   fields,
   resources,
   defaultGroups,
+  pairings,
   tasksForDate,
   onClose,
   onCreate,
@@ -118,6 +124,7 @@ export default function NewTaskModal({
 
   const [newFieldName, setNewFieldName] = useState('')
   const [newResName, setNewResName] = useState('')
+  const [newAssetCategory, setNewAssetCategory] = useState('')
 
   // Hauling-only state
   const [commodity, setCommodity] = useState<HaulCommodity | ''>('')
@@ -142,8 +149,13 @@ export default function NewTaskModal({
     [defaultGroups, typeId],
   )
 
-  // Equipment grouped by category; Crew grouped by division (Ufer before LB Pork).
-  const equipmentGroups = useMemo(() => groupAssetsByCategory(resources), [resources])
+  // Equipment grouped by category (restricted to what a Hauling/Harvest task
+  // actually uses, when applicable); Crew grouped by division (Ufer first).
+  const equipmentCategories = equipmentCategoriesForTaskType(selectedType?.name)
+  const equipmentGroups = useMemo(
+    () => groupAssetsByCategory(resources, equipmentCategories),
+    [resources, equipmentCategories],
+  )
   const crewGroups = useMemo(() => groupEmployeesByDivision(resources), [resources])
 
   function goTo(next: Screen) {
@@ -160,10 +172,31 @@ export default function NewTaskModal({
   }
 
   function toggleResource(id: string) {
+    if (pickedResources.has(id)) {
+      setPickedResources((prev) => {
+        const next = new Set(prev)
+        next.delete(id)
+        return next
+      })
+      return
+    }
+    // Checking something that has a default pairing (semi+trailer,
+    // tractor+grain cart, ...) offers to bring its partner along too.
+    const additions = [id]
+    const resource = resources.find((r) => r.id === id)
+    if (resource) {
+      const partners = pairedWith(resource, pairings)
+        .map((pid) => resources.find((r) => r.id === pid))
+        .filter((r): r is Resource => !!r && !pickedResources.has(r.id))
+      for (const partner of partners) {
+        if (confirm(`${resource.name} is paired with ${partner.name}. Include ${partner.name} too?`)) {
+          additions.push(partner.id)
+        }
+      }
+    }
     setPickedResources((prev) => {
       const next = new Set(prev)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
+      for (const a of additions) next.add(a)
       return next
     })
   }
@@ -296,7 +329,7 @@ export default function NewTaskModal({
     }
   }
 
-  async function addResourceOfType(type: 'asset' | 'employee') {
+  async function addResourceOfType(type: 'asset' | 'employee', category: string | null = null) {
     if (!newResName.trim()) return
     try {
       const r = await onAddResource({
@@ -304,6 +337,7 @@ export default function NewTaskModal({
         type,
         shift_start: null,
         shift_end: null,
+        category,
       })
       setPickedResources((prev) => new Set(prev).add(r.id))
       setNewResName('')
@@ -670,10 +704,19 @@ export default function NewTaskModal({
                 </div>
               </>
             )}
-            <Label>Equipment</Label>
+            <Label>
+              Equipment
+              {equipmentCategories && (
+                <span style={{ textTransform: 'none', letterSpacing: 0 }}> — {equipmentCategories.join(' / ')} only</span>
+              )}
+            </Label>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', maxHeight: '260px', overflowY: 'auto' }}>
               {equipmentGroups.length === 0 && (
-                <div style={{ fontSize: '12px', color: C.muted }}>No equipment yet — add one below.</div>
+                <div style={{ fontSize: '12px', color: C.muted }}>
+                  {equipmentCategories
+                    ? `No ${equipmentCategories.join(' or ')} yet — add one below.`
+                    : 'No equipment yet — add one below.'}
+                </div>
               )}
               {equipmentGroups.map((g) => (
                 <div key={g.label}>
@@ -697,13 +740,29 @@ export default function NewTaskModal({
               ))}
             </div>
             <div style={{ display: 'flex', gap: '6px', margin: '12px 0 18px' }}>
+              {equipmentCategories && (
+                <select
+                  value={newAssetCategory || equipmentCategories[0]}
+                  onChange={(e) => setNewAssetCategory(e.target.value)}
+                  style={{ ...inputStyle, width: '110px' }}
+                >
+                  {equipmentCategories.map((c) => (
+                    <option key={c} value={c}>
+                      {c}
+                    </option>
+                  ))}
+                </select>
+              )}
               <input
                 value={newResName}
                 onChange={(e) => setNewResName(e.target.value)}
                 placeholder="+ Add equipment"
                 style={inputStyle}
               />
-              <button onClick={() => addResourceOfType('asset')} style={ghostBtn}>
+              <button
+                onClick={() => addResourceOfType('asset', equipmentCategories ? newAssetCategory || equipmentCategories[0] : null)}
+                style={ghostBtn}
+              >
                 Add
               </button>
             </div>

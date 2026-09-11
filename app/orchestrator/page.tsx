@@ -424,6 +424,7 @@ export default function OrchestratorPage() {
           fields={lookups.fields}
           resources={lookups.resources}
           defaultGroups={lookups.defaultGroups}
+          pairings={lookups.pairings}
           tasksForDate={tasksForCurrentDate}
           onClose={() => setShowNew(false)}
           onCreate={handleCreate}
@@ -439,6 +440,7 @@ export default function OrchestratorPage() {
           taskTypes={lookups.taskTypes}
           fields={lookups.fields}
           resources={lookups.resources}
+          pairings={lookups.pairings}
           tasks={tasks}
           onClose={() => setEditingTask(null)}
           onSave={handleSaveTask}
